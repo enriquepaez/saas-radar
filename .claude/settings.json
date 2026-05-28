@@ -29,7 +29,26 @@
     "allow": [
       "Bash(./init.sh)",
       "Bash(python3 -m unittest*)",
-      "Bash(python3 -m src.cli*)"
+      "Bash(python3 -m src.cli*)",
+      "Bash(bash init.sh *)",
+      "Bash(uv run ruff check . 2>&1)",
+      "Bash(uv run ruff format --check . 2>&1)",
+      "Bash(python -m pytest *)",
+      "Bash(python -m venv .venv_test *)",
+      "Write(progress/*)",
+      "Write(src/saas_radar/**)",
+      "Write(tests/**)",
+      "Edit(feature_list.json)",
+      "Edit(progress/*)",
+      "Edit(src/saas_radar/**)",
+      "Edit(tests/**)",
+      "Edit(.claude/settings.json)",
+      "Edit(CLAUDE.md)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(git status)",
+      "Bash(git diff --stat *)"
     ]
   }
 }

@@ -31,6 +31,32 @@ implementar.
 3. Ejecuta `./init.sh`. Si falla, paras y reportas.
 4. Aplica la tabla de escalado de `.claude/agents/leader.md`.
 
+### Cierre de feature: rama, commit y push
+
+Cada feature se trabaja en su propia rama. El usuario hace el merge desde GitHub.
+
+#### Flujo de rama
+
+- Al arrancar una feature, crea la rama: `git checkout -b feat/<id>-<name>` (p.ej. `feat/2-db_layer_with_migrations`).
+- Todo el trabajo de esa feature va en esa rama.
+- Al terminar, push de la rama. El usuario abre y mergea el PR desde GitHub.
+- No hagas merge a `main` tú mismo.
+
+#### Commit al cierre
+
+Cuando el reviewer aprueba, **antes de cerrar la sesión**:
+
+1. Muestra el resumen de archivos modificados (`git status` + `git diff --stat`).
+2. Propón el mensaje de commit: una sola línea, sin cuerpo ni trailers:
+   ```
+   feat(#<id>): <descripción breve de lo implementado>
+   ```
+3. **Pide confirmación explícita** antes de ejecutar nada.
+4. Solo si el usuario confirma: `git add <archivos concretos>`, `git commit -m "..."`, `git push -u origin <rama>`.
+5. Si el usuario pide cambios en el mensaje, ajusta y vuelve a pedir confirmación.
+
+**Regla dura:** nunca hagas commit, push ni cambio de rama sin confirmación explícita del usuario en ese turno.
+
 ### Regla anti-teléfono-descompuesto
 
 Cuando lances subagentes, instrúyeles para **escribir resultados en archivos**

@@ -28,3 +28,19 @@
   porque `src/` aún no tiene código.
 - **Cierre:** repo listo para arrancar feature #1 (`bootstrap_package`)
   con el subagente `implementer`.
+
+---
+
+## 2026-05-28 — Feature #1: bootstrap_package
+
+- **Agente:** Claude Sonnet 4.6 (leader) + implementer + reviewer.
+- **Feature:** `bootstrap_package` (#1, M1_foundation).
+- **Archivos creados:**
+  - `pyproject.toml` — paquete pip-installable con dependencias, ruff y pytest configurados.
+  - `src/saas_radar/__init__.py` — expone `__version__ = "0.1.0"`.
+  - `src/saas_radar/py.typed` — marcador PEP 561 para type checkers.
+  - `tests/__init__.py` — paquete pytest.
+  - `tests/test_import.py` — 2 tests de importabilidad.
+- **Verificación:** `pip install -e .[dev]` + `pytest` → 2 passed. `./init.sh` → OK.
+- **Review:** APPROVED por reviewer subagente.
+- **Cierre:** feature #1 marcada `done`. Desbloquea: #2 (db_layer), #3 (config), #5 (text_cleaning), #8 (llm_clients), #14 (telegram).
