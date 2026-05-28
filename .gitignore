@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Entorno
+.env
+.env.*
+.venv/
+venv/
+
+# Datos locales (BD, caches, runs, reportes)
+# La BD viaja por la rama `data` del repo (heredado del legacy).
+data/
+
+# Build artefacts
+build/
+dist/
+
+# OS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Sesiones del harness — current.md SÍ se commitea (es la sesión viva),
+# pero los archivos auxiliares del implementer/reviewer son efímeros y
+# pueden quedar fuera si se prefiere. Hoy se commitean para auditoría.
+# (no ignorar progress/impl_*.md ni progress/review_*.md)

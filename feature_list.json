@@ -1,0 +1,401 @@
+{
+  "project": "saas-radar",
+  "description": "Pipeline Python que escanea subreddits buscando dolores reales y los analiza con LLM para detectar oportunidades de micro-SaaS. Reconstrucción del legacy reddit-saas-radar sobre el arnés ejemplo-harness-subagentes. La BD data/saas.db (79 MB) viene del legacy y se reutiliza tal cual.",
+  "rules": {
+    "one_feature_at_a_time": true,
+    "require_tests_to_close": true,
+    "valid_status": ["pending", "in_progress", "done", "blocked"],
+    "respect_dependencies": true
+  },
+  "milestones": {
+    "M1_foundation": [1, 2, 3, 4],
+    "M2_pipeline_ia": [5, 6, 7, 8, 9, 10, 11, 12],
+    "M3_productizacion": [13, 14, 15, 16],
+    "M4_operacion_avanzada": [17, 18, 19, 20, 21]
+  },
+  "features": [
+    {
+      "id": 1,
+      "name": "bootstrap_package",
+      "milestone": "M1_foundation",
+      "title": "Proyecto pip-installable con dependencias declaradas",
+      "description": "Estructura src/saas_radar/ con pyproject.toml completo ([project] + dependencies). Sin sys.path.append. Importable desde un venv limpio. Ruff y pytest configurados.",
+      "acceptance": [
+        "pip install -e . funciona en una venv limpia (Python 3.11+)",
+        "python -c 'import saas_radar' no levanta ModuleNotFoundError",
+        "pyproject.toml declara en [project].dependencies: praw, pandas, sqlalchemy, nltk, httpx, python-dotenv",
+        "pyproject.toml declara en [project.optional-dependencies].dev: pytest, ruff",
+        "[tool.ruff] configurado con line-length 120, target py311, select E/F/I/B/UP, ignore E501/E701",
+        "[tool.pytest.ini_options] con testpaths=tests, addopts=-q",
+        "python -m pytest ejecuta sin error (0 tests aceptable)",
+        "src/saas_radar/__init__.py existe (puede estar vacío)",
+        "No hay sys.path.append en ningún sitio (init.sh §6 lo verifica)"
+      ],
+      "depends_on": [],
+      "status": "pending"
+    },
+    {
+      "id": 2,
+      "name": "db_layer_with_migrations",
+      "milestone": "M1_foundation",
+      "title": "Capa SQLAlchemy/SQLite con 7 tablas + migraciones idempotentes",
+      "description": "src/saas_radar/storage/db.py con init_db, save_to_db, load_from_db, db_stats, persist_run_to_db, load_active_opportunities, persist_meta_recommendations, has_successful_run. Schema replica el del legacy (ver docs/legacy-context/inventory.md §2). Migraciones idempotentes con PRAGMA table_info + ALTER TABLE.",
+      "acceptance": [
+        "init_db() crea las 7 tablas (reddit_posts, reddit_comments, analysis_runs, opportunities, meta_recommendations, opportunity_gtm, sqlite_sequence)",
+        "init_db() llamado 2 veces no falla",
+        "Si data/saas.db del legacy ya existe, init_db NO destruye datos: SELECT COUNT(*) FROM reddit_posts sigue ≈19702",
+        "Migración idempotente: si falta semantic_score en reddit_posts, lo añade con ALTER TABLE; si falta canonical_id en opportunities, igual",
+        "save_to_db(df, 'reddit_posts') hace INSERT OR IGNORE vía tabla _staging_X",
+        "save_to_db normaliza subreddit a minúsculas antes de insertar",
+        "load_active_opportunities() devuelve solo id == canonical_id AND discarded = 0",
+        "Tests cubren: idempotencia init_db, INSERT OR IGNORE con duplicados, load_from_db, db_stats con BD vacía y poblada, BD heredada del legacy no se rompe",
+        "Todos los índices del legacy se replican (idx_posts_subreddit, idx_opps_canonical, etc.)"
+      ],
+      "depends_on": [1],
+      "status": "pending"
+    },
+    {
+      "id": 3,
+      "name": "config_module",
+      "milestone": "M1_foundation",
+      "title": "Módulo de configuración con env vars + listas mutables",
+      "description": "src/saas_radar/config.py con python-dotenv. Replica las constantes del legacy: scraping (POST_LIMIT, etc.), AI (modelos, URLs), IA (MAX_POSTS, MIN_SEMANTIC_SCORE, etc.). Listas mutables: SUBREDDITS, HIGH_SIGNAL_SUBREDDITS, PAIN_SEARCH_QUERIES, PAIN_SIGNAL_PHRASES, SHOWCASE_TITLE_PREFIXES, OFF_TOPIC_SIGNALS. Sin efectos secundarios al importar.",
+      "acceptance": [
+        "from saas_radar import config carga sin error sin .env",
+        "config.AI_PROVIDER lee de env, default 'claude'",
+        "config.PAIN_SIGNAL_PHRASES es lista de tuplas (str, int) — replicar las ~120 del legacy tal cual",
+        "config.SUBREDDITS contiene los 36 subreddits del legacy con sus tiers documentados",
+        "config.HIGH_SIGNAL_SUBREDDITS es un set de los mismos del legacy",
+        "Tests: env var override con monkeypatch.setenv (AI_PROVIDER, GROQ_API_KEY, etc.), tipos correctos, longitudes esperadas",
+        "NO hay print() ni side-effects al importar el módulo",
+        "Las constantes documentadas en docs/legacy-context/inventory.md §1.2 están presentes"
+      ],
+      "depends_on": [1],
+      "status": "pending"
+    },
+    {
+      "id": 4,
+      "name": "scraper_reddit_basic",
+      "milestone": "M1_foundation",
+      "title": "Scraper Reddit con PRAW (singleton + 3 funciones)",
+      "description": "src/saas_radar/scrapers/reddit_scraper.py con get_reddit() singleton, fetch_posts(sub, limit, incremental), search_pain_posts(query, limit, incremental), fetch_top_comments(post_id, limit). Replica el comportamiento del legacy (modo full vs incremental, multireddit search, dedup por id).",
+      "acceptance": [
+        "get_reddit() devuelve el mismo cliente en llamadas sucesivas (singleton)",
+        "fetch_posts con incremental=False usa feeds [hot, new(/2), top-month(/2), top-year(/2)]",
+        "fetch_posts con incremental=True usa feeds [new, hot, top-day(/2)]",
+        "fetch_posts dedup por id dentro del DataFrame devuelto",
+        "search_pain_posts(query) ejecuta multireddit '+'.join(SUBREDDITS).search(query)",
+        "search_pain_posts con incremental=True añade time_filter='day'",
+        "fetch_top_comments aplica replace_more(limit=0) y filtra len(body) >= COMMENT_MIN_LENGTH",
+        "Tests con praw.Reddit mockeado vía MagicMock: dedup, modos incremental vs full, filtros de longitud",
+        "NO se hacen llamadas reales a Reddit en CI"
+      ],
+      "depends_on": [2, 3],
+      "status": "pending"
+    },
+    {
+      "id": 5,
+      "name": "text_cleaning_and_classifier",
+      "milestone": "M2_pipeline_ia",
+      "title": "Limpieza NLP + clasificación de posts",
+      "description": "src/saas_radar/analysis/text_cleaning.py (clean_text, normalize_for_classifier) + analysis/post_classifier.py (classify_post(title, text) con 6 categorías).",
+      "acceptance": [
+        "clean_text('HTTP://x.com hola mundo') devuelve string sin URL ni stopwords ni puntuación",
+        "classify_post('I built X', '...') devuelve 'showcase'",
+        "classify_post('How do you handle invoices?', 'manage track') devuelve 'question_operational'",
+        "classify_post('I hate manual process', '...') devuelve 'pain_point'",
+        "classify_post('', '') devuelve 'other'",
+        "NLTK stopwords se descargan con cache (nltk.download('stopwords', quiet=True))",
+        "Tests cubren las 6 categorías + edge cases (texto vacío, solo emoji, lista de keywords del legacy)",
+        "Listas PAIN_KEYWORDS/SHOWCASE_KEYWORDS/EMOTIONAL_KEYWORDS/OPERATIONAL_KEYWORDS replicadas del legacy"
+      ],
+      "depends_on": [1],
+      "status": "pending"
+    },
+    {
+      "id": 6,
+      "name": "semantic_score_filter",
+      "milestone": "M2_pipeline_ia",
+      "title": "Pre-filtro semántico con regex pre-compiladas",
+      "description": "src/saas_radar/analysis/pain_filter.py:_semantic_score(title, text). Reglas: -99 si título matches SHOWCASE_TITLE_PREFIXES, -50 si contenido matches OFF_TOPIC_SIGNALS, suma de pesos por PAIN_SIGNAL_PHRASES (bonus x0.5 si también en título).",
+      "acceptance": [
+        "_semantic_score('How I built X', '...') devuelve -99.0",
+        "_semantic_score('Real pain', \"I'm burned out\") devuelve -50.0",
+        "_semantic_score('invoice trouble', 'I use Excel to track invoices') devuelve >= 3 (al menos 1 phrase +3 con bonus título)",
+        "Regex se compilan UNA vez al import del módulo (no por llamada)",
+        "Tests cubren: showcase prefix, off-topic, suma de phrases, bonus título, texto vacío",
+        "Tests usan las listas PAIN_SIGNAL_PHRASES / SHOWCASE_TITLE_PREFIXES / OFF_TOPIC_SIGNALS reales de config.py"
+      ],
+      "depends_on": [3],
+      "status": "pending"
+    },
+    {
+      "id": 7,
+      "name": "data_loader_with_ranking",
+      "milestone": "M2_pipeline_ia",
+      "title": "Carga + ranking de posts para IA",
+      "description": "src/saas_radar/analysis/data_loader.py:load_pain_posts(min_score, top_n, include_comments, post_age_days) + load_pain_comments_as_posts(). Filtros, recálculo de _semantic_score, merge de comentarios como posts virtuales, ranking blend 10/15/75 + cap por subreddit.",
+      "acceptance": [
+        "load_pain_posts(min_score=5, top_n=20) sobre data/saas.db heredada devuelve DataFrame con ≤20 filas",
+        "Filtros aplicados: SUBREDDITS, PAIN_CATEGORIES, score>=min_score, len(text)>100, created_utc>=now-post_age_days*86400",
+        "Recalcula _semantic_score (no usa el valor persistido)",
+        "Filtro semantic_score >= MIN_SEMANTIC_SCORE (1.5)",
+        "Merge load_pain_comments_as_posts: comentarios entran como source='comment' con pseudo-título (primera frase ≤120 chars)",
+        "Ranking: rank_score = 0.10*score_norm + 0.15*num_comments_norm + 0.75*sem_norm (normalización por subreddit)",
+        "Cap por subreddit: HIGH_SIGNAL_SUBREDDITS → 10, default → 4",
+        "Tests con BD temporal fixture: filtro temporal, semántico, ranking estable, cap correcto"
+      ],
+      "depends_on": [2, 6],
+      "status": "pending"
+    },
+    {
+      "id": 8,
+      "name": "llm_clients_dispatcher",
+      "milestone": "M2_pipeline_ia",
+      "title": "Clientes LLM (Claude + Gemini + Groq) con dispatcher",
+      "description": "src/saas_radar/analysis/llm_clients.py con call_claude, call_gemini, call_groq, _parse_json_payload, call_llm(prompt, max_tokens, phase, max_retries, provider). CAMBIO respecto al legacy: provider como arg explícito, NO leer de config.AI_PROVIDER global (lección legacy §2.5).",
+      "acceptance": [
+        "_parse_json_payload('```json\\n{\"a\":1}\\n```') devuelve {'a': 1}",
+        "_parse_json_payload tolera fences sin etiqueta de lenguaje, etiqueta 'json' o 'JSON', y JSON pelado",
+        "call_llm(prompt, provider='claude') usa Anthropic API; provider='gemini' Google; provider='groq' Groq",
+        "call_llm(phase='synthesis', provider='claude') selecciona CLAUDE_SYNTHESIS_MODEL (Sonnet); phase='extraction' selecciona CLAUDE_EXTRACTION_MODEL (Haiku)",
+        "Retry con parseo de retry-after (Claude), retryDelay (Gemini), 'Please try again in Xs' (Groq)",
+        "Tests con httpx.MockTransport o respx: 200 OK parsea JSON, 429 espera y reintenta, 5xx aborta tras N retries",
+        "Tests verifican que NO se muta config.AI_PROVIDER en ningún caller (cambio respecto al legacy)"
+      ],
+      "depends_on": [3],
+      "status": "pending"
+    },
+    {
+      "id": 9,
+      "name": "extraction_batch_and_deep",
+      "milestone": "M2_pipeline_ia",
+      "title": "Extracción IA modo batch + deep + limpieza + circuit breaker",
+      "description": "src/saas_radar/analysis/extraction.py con extract_problem_from_post, extract_problem_deep, extract_problems_batch. _clean_extractions como 4 funciones puras (CAMBIO vs legacy §2.9: no mezcladas). EXTRACTION_BATCH_SIZE=5, DEEP_EXTRACTION_THRESHOLD=30.",
+      "acceptance": [
+        "len(posts) <= 30 → usa extract_problem_deep (1 post + comentarios BD + prompt enriquecido)",
+        "len(posts) > 30 → batch de 5 posts/llamada con TEXT_SNIPPET_LEN=500",
+        "_clean_extractions en 4 funciones puras encadenadas: drop_who_vago, drop_non_saas, fix_workaround (con inferencia), fix_payment_signal",
+        "Workaround inferido desde texto cuando LLM lo deja vacío (lista _WORKAROUND_KEYWORDS del legacy)",
+        "Posts sin workaround pero con dolor cuantificable se mantienen con _weak_workaround=True",
+        "Circuit breaker: tras 3 batches consecutivos con _error, aborta el loop",
+        "Tests con mocks de call_llm: schema válido, batch parcial, who vago descartado, dolor físico descartado, circuit breaker dispara"
+      ],
+      "depends_on": [7, 8],
+      "status": "pending"
+    },
+    {
+      "id": 10,
+      "name": "synthesis_with_validation",
+      "milestone": "M2_pipeline_ia",
+      "title": "Síntesis IA con RULES 1-7 + validación post-LLM",
+      "description": "src/saas_radar/analysis/synthesis.py:build_synthesis_prompt(extractions) con pre-clustering por subreddit + RULES 1-7. _validate_synthesis(results, ordered_extractions) con check cantidad + check coherencia léxica sobre problem_description real (NO sobre evidence_quotes del LLM, lección §1.5).",
+      "acceptance": [
+        "El prompt incluye separadores '### CLUSTER: r/<sub> (N items) ###'",
+        "Pre-clustering ordena subreddits por count desc; numeración global [1..N]",
+        "RULES 1-7 textualmente replicadas del legacy (sin recortes)",
+        "_validate_synthesis descarta opps con len(evidence_items) < 2 O len(evidence_quotes) < 2",
+        "_coherence_words filtra contra _COHERENCE_STOP rico de dominio (incluye 'manu', 'trac', 'spre', 'exce')",
+        "Test: opp con 2 evidence_items cuyos problem_description NO comparten 2+ raíces de dominio → descartada con rule_violated en disqualified_ideas",
+        "Test: opp con 3 evidence_items que comparten raíces de dominio → kept",
+        "Top_3_recommended se reconstruye con solo ids supervivientes"
+      ],
+      "depends_on": [9],
+      "status": "pending"
+    },
+    {
+      "id": 11,
+      "name": "ai_analyzer_orchestrator",
+      "milestone": "M2_pipeline_ia",
+      "title": "Orquestador IA con cache defensivo + persistencia",
+      "description": "src/saas_radar/analysis/ai_analyzer.py:run_ai_analysis(...) que encadena load_pain_posts → extracción (deep/batch) → _clean_extractions → build_synthesis_prompt → call_llm → _validate_synthesis → print_results + save_results + persist_run_to_db. Cache defensivo (_save_extractions_cache).",
+      "acceptance": [
+        "--use-cached-extractions salta la fase de extracción si existe extractions_cache.json",
+        "Cache defensivo: si valid_new=0 y valid_old>0, NO sobrescribe, escribe <path>.failed.json",
+        "Aborta antes de síntesis si len(valid) < 2 (RULE 1 imposible)",
+        "Persiste analysis_runs con status 'ok'/'partial'/'failed' según resultado",
+        "Tests con respx para mockear los providers + BD temporal SQLite: flujo completo, cache defensivo, abort por len<2"
+      ],
+      "depends_on": [2, 10],
+      "status": "pending"
+    },
+    {
+      "id": 12,
+      "name": "main_cli_pipeline",
+      "milestone": "M2_pipeline_ia",
+      "title": "CLI main.py con todas las fases + detección de modo",
+      "description": "src/saas_radar/main.py con argparse: --skip-scrape, --skip-ai, --skip-gtm, --min-score, --top-posts, --output, --use-cached-extractions, --full-scan. Fases 1-3 (scrape + pain_search + comments). Detección automática INCREMENTAL vs CARGA COMPLETA vía has_successful_run(). ThreadPoolExecutor(max_workers=8) para comentarios.",
+      "acceptance": [
+        "python -m saas_radar.main --help lista todos los flags",
+        "python -m saas_radar.main --skip-scrape --skip-ai --skip-gtm arranca init_db + imprime mensajes de omisión sin error",
+        "has_successful_run()=True → log 'Modo: INCREMENTAL (24h)'",
+        "has_successful_run()=False O --full-scan → log 'Modo: CARGA COMPLETA (365d)'",
+        "Fase 3 usa ThreadPoolExecutor(max_workers=COMMENT_FETCH_WORKERS=8)",
+        "Tests E2E con mock de PRAW + mock de LLM + BD temporal: run completo termina con exit code 0 y persiste 1 fila en analysis_runs",
+        "El skip-gtm fase aún no llama al agente (eso es feature #17); el flag solo se acepta sin error"
+      ],
+      "depends_on": [4, 11],
+      "status": "pending"
+    },
+    {
+      "id": 13,
+      "name": "meta_analysis_and_recommendations",
+      "milestone": "M3_productizacion",
+      "title": "Meta-análisis post-run con tabla meta_recommendations",
+      "description": "src/saas_radar/analysis/meta_analysis.py:generate_meta_analysis(extractions, opportunities, post_age_days). Tabla meta_recommendations con recurrence que se incrementa si el mismo type+target ya existía.",
+      "acceptance": [
+        "Genera data/runs/<ts>_meta.json con subreddit_signal, silent_subreddits, empty_queries, recurring_niches, pain_categories, discovered_subreddits, recommendations",
+        "Persiste recomendaciones en BD con dedup por (type, target): incrementa recurrence",
+        "_find_empty_queries consulta reddit_posts con search_query y filtro temporal",
+        "_find_discovered_subreddits devuelve subs no en SUBREDDITS con >=2 hits",
+        "print_meta_summary imprime resumen compacto (test snapshot del formato)",
+        "Tests con BD temporal: recurrence incrementa, recommendations se generan según hit_rate"
+      ],
+      "depends_on": [11],
+      "status": "pending"
+    },
+    {
+      "id": 14,
+      "name": "telegram_notifications",
+      "milestone": "M3_productizacion",
+      "title": "Notificaciones Telegram (opp alert + run summary + helpers)",
+      "description": "src/saas_radar/notifications/telegram.py con send_opportunity_alert(opp), send_run_summary(...), send_text(text), send_tuner_report(path). No-op silencioso sin TELEGRAM_BOT_TOKEN.",
+      "acceptance": [
+        "Sin env vars: las funciones devuelven False sin error",
+        "Con env vars: usa httpx para POST a api.telegram.org/bot<token>/sendMessage",
+        "send_opportunity_alert skip si priority_score < TELEGRAM_ALERT_THRESHOLD (default 8)",
+        "Trunca a 4000 chars (Telegram limit 4096)",
+        "send_tuner_report envuelve en bloque ``` para preservar formato CLI",
+        "CLI 'python -m saas_radar.notifications.telegram tuner-report <path>' y 'send --text X' funcionan",
+        "Tests con httpx.MockTransport: payload correcto, modo Markdown, truncado, no-op sin token"
+      ],
+      "depends_on": [1],
+      "status": "pending"
+    },
+    {
+      "id": 15,
+      "name": "dedup_jaccard_v1",
+      "milestone": "M3_productizacion",
+      "title": "Dedup semántico v1 con canonical_id (Jaccard)",
+      "description": "src/saas_radar/analysis/dedup.py:find_canonical(opp, existing, threshold=0.3). Schema: opportunities.canonical_id. Wiring en persist_run_to_db y vista load_active_opportunities. Script scripts/backfill_canonical.py.",
+      "acceptance": [
+        "Migración idempotente añade canonical_id si falta",
+        "find_canonical con threshold=0.3: 2 opps idénticas matchean; mismo product_name pero evidencia disjunta NO matchea",
+        "persist_run_to_db setea canonical_id al insertar; opp nueva sin match → autoreferencia tras INSERT (UPDATE id == canonical_id)",
+        "load_active_opportunities devuelve solo id == canonical_id AND discarded = 0",
+        "scripts/backfill_canonical.py con --dry-run/--yes/--force funciona contra BD heredada legacy y produce 4 canónicas ({1}, {2,4,7,9,10}, {3,5,6}, {8}) — comprobar manualmente con --dry-run",
+        "Tests con 19 casos (clonar de tests/test_dedup.py del legacy)",
+        "Documentar en progress/impl_dedup_jaccard_v1.md la limitación conocida (falsos negativos por evidencia disjunta) — reproducir el comportamiento del legacy"
+      ],
+      "depends_on": [11],
+      "status": "pending"
+    },
+    {
+      "id": 16,
+      "name": "github_actions_pipeline_workflow",
+      "milestone": "M3_productizacion",
+      "title": "Workflow GitHub Actions (cron diario + rama data)",
+      "description": ".github/workflows/pipeline.yml con cron '0 8 * * *', workflow_dispatch con input full_scan. Checkout dual main+data, restore de persist/data/, install deps + NLTK, run, commit push a rama data.",
+      "acceptance": [
+        "Workflow se dispara manualmente con: gh workflow run 'saas-radar pipeline' -f full_scan=true",
+        "Job termina verde con BD vacía (run que no produce opps no falla — status='partial' ok)",
+        "Commit a rama data solo si hay cambios (git diff --cached --quiet)",
+        "Concurrency: 'saas-radar', cancel-in-progress: false",
+        "Secrets requeridos documentados en progress/impl_<feature>.md: REDDIT_*, ANTHROPIC_API_KEY, GEMINI_API_KEY, GROQ_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, AI_PROVIDER",
+        "Verificación manual: 1 run real en GitHub con artefactos correctos (documentar en progress/)"
+      ],
+      "depends_on": [12],
+      "status": "pending"
+    },
+    {
+      "id": 17,
+      "name": "gtm_agent_b1_b2",
+      "milestone": "M4_operacion_avanzada",
+      "title": "GTM agent (B1 tabla + CLI) + (B2 fase 5 en main)",
+      "description": "Tabla opportunity_gtm (1:1 con opportunities). Prompt analysis/prompts/gtm.py:build_gtm_prompt(opp) con 3 tareas (viabilidad + GTM + plan 7d). CLI 'python -m saas_radar.agents.gtm_agent --opp-id N / --all-pending --force --min-priority'. Fase 5 en main.py:phase_gtm() envuelta en try/except.",
+      "acceptance": [
+        "Tabla opportunity_gtm con UNIQUE(opportunity_id) + ON DELETE CASCADE (replicar schema del legacy)",
+        "build_gtm_prompt incluye hasta 5 evidence_quotes",
+        "Gate viability_total < 20 → drop campos B+C, persist con gtm_status='skipped_low_viability'",
+        "Fallo LLM (None devuelto) → gtm_status='failed' con scores NULL, no aborta el batch",
+        "Idempotente sin --force; con --force hace DELETE+INSERT (sólo de la fila de esa opp)",
+        "phase_gtm en main NO aborta el pipeline si el agente falla (try/except aislado)",
+        "--skip-gtm omite la fase 5 sin importar agents.gtm_agent (import lazy)",
+        "Tests cubren los 3 estados (generated/skipped_low_viability/failed) + idempotencia + gate"
+      ],
+      "depends_on": [15],
+      "status": "pending"
+    },
+    {
+      "id": 18,
+      "name": "tuning_rules_a1_a2_a3",
+      "milestone": "M4_operacion_avanzada",
+      "title": "Tuner: reglas deterministas + CLI dry-run + workflow + Telegram",
+      "description": "agents/tuning_rules.py (4 reglas: promote, remove_subreddit, demote, remove_query). agents/tuner.py CLI dry-run con --lookback, --max-changes, --show-diff. Workflow tuner.yml con workflow_run sobre pipeline.yml, sube artefacto y manda Telegram.",
+      "acceptance": [
+        "propose_all_changes devuelve list[Proposal] con orden conservador (remove_query > demote > remove_subreddit > add_high_signal)",
+        "Las 4 reglas replican exactamente las del legacy (ver docs/legacy-context/inventory.md §1.6 y plan/tuner.md)",
+        "CLI imprime formato fijo (snapshot test en tests/fixtures/tuner_report_expected.txt)",
+        "Workflow se dispara solo si pipeline=success",
+        "send_tuner_report trunca a 3900 chars y envuelve en ``` para Telegram",
+        "Tests: 26 tests para tuning_rules (clonar de legacy), 17 para tuner CLI, 4 para telegram tuner-report"
+      ],
+      "depends_on": [13, 14, 16],
+      "status": "pending"
+    },
+    {
+      "id": 19,
+      "name": "logging_structured_l1_l2",
+      "milestone": "M4_operacion_avanzada",
+      "title": "Logging estructurado (L1 setup + L2 módulos internos)",
+      "description": "src/saas_radar/logging_setup.py:setup_logging(level, fmt) con JSON opcional. Migrar print a logger en módulos sin formato consumido: storage/db.py, helpers/*, analysis/dedup.py, analysis/llm_clients.py, scrapers/*, notifications/*.",
+      "acceptance": [
+        "LOG_LEVEL=DEBUG LOG_FORMAT=json produce líneas JSON parseables (test con json.loads)",
+        "Default text produce formato humano: 'TS LEVEL logger_name: message'",
+        "El CLI del pipeline mantiene su output (cabeceras de fase 'Fase 4: …') — eso NO se migra a logger en esta feature",
+        "Los módulos migrados usan logging.getLogger(__name__) en lugar de print",
+        "Tests con caplog: niveles correctos, json vs text",
+        "Forzar stream=sys.stdout con encoding='utf-8' (workaround Windows cp1252 documentado en CLAUDE.md del legacy)"
+      ],
+      "depends_on": [2],
+      "status": "pending"
+    },
+    {
+      "id": 20,
+      "name": "tuner_a4_pr_mode",
+      "milestone": "M4_operacion_avanzada",
+      "title": "Tuner modo PR real con --apply + gh pr create",
+      "description": "Flag --apply que edita config.py con regex acotadas (no libcst si no es necesario). gh pr create desde el workflow con rama chore/auto-tuning-YYYYMMDD. Append automático al registro de tuning del README. Guard de PR abierto.",
+      "acceptance": [
+        "--apply edita config.py para los cambios propuestos sin tocar formato/comentarios",
+        "PR se abre con body = tuner_report.txt completo + link al meta-JSON",
+        "Si ya hay PR abierto con prefijo chore/auto-tuning-, el agente skip + reporta en stdout",
+        "meta_recommendations.acted=1 tras incluir en PR; revierte a 0 si PR se cierra sin merge en el siguiente run",
+        "Test E2E con repo mock + gh mockeado (subprocess.run patched)",
+        "Verificación manual: 1 PR auto mergeado documentado en progress/"
+      ],
+      "depends_on": [18],
+      "status": "pending"
+    },
+    {
+      "id": 21,
+      "name": "llm_heuristic_tuner",
+      "milestone": "M4_operacion_avanzada",
+      "title": "Tuner heurístico con LLM: generación de nuevas queries, subreddits y frases",
+      "description": "src/saas_radar/agents/heuristic_tuner.py con generate_heuristic_suggestions(meta_json_path, top_posts_df, provider) que construye un prompt con los datos del run (nichos recurrentes, posts de alta señal, subreddits descubiertos, queries vacías) y llama al LLM para generar sugerencias nuevas. Las sugerencias se persisten en meta_recommendations con tipos query_suggestion / subreddit_suggestion / phrase_suggestion. El tuner determinista de #18 gana reglas adicionales para manejar estos tipos nuevos. CLI con --dry-run. Fase 4.5 en main.py envuelta en try/except.",
+      "acceptance": [
+        "generate_heuristic_suggestions recibe: lista de nichos recurrentes (recurrence>=2 de meta_recommendations), top_posts_df con los posts de mayor semantic_score del run (hasta 20), lista de subreddits descubiertos, lista de queries vacías → construye prompt y llama a call_llm(provider=provider, phase='synthesis')",
+        "Schema de salida del LLM: {new_queries: [{query: str, rationale: str}], new_subreddits: [{name: str, rationale: str}], new_phrases: [{phrase: str, weight: int, rationale: str}]} — validado con _parse_json_payload",
+        "persist_heuristic_suggestions(suggestions, db_path) inserta en meta_recommendations con type in {query_suggestion, subreddit_suggestion, phrase_suggestion} e incrementa recurrence si ya existe la misma (type, target)",
+        "Dedup contra config actual: no persiste queries ya en PAIN_SEARCH_QUERIES, ni subreddits ya en SUBREDDITS, ni frases ya en PAIN_SIGNAL_PHRASES",
+        "CLI: python -m saas_radar.agents.heuristic_tuner --meta-json <path> [--provider claude] [--dry-run] imprime resumen de sugerencias sin escribir en BD cuando --dry-run",
+        "Las 4 reglas deterministas de #18 (tuning_rules.py) ganan reglas A5/A6/A7 para manejar query_suggestion, subreddit_suggestion y phrase_suggestion: proponen add_query / add_subreddit / add_phrase cuando recurrence >= 2",
+        "Integración en main.py como fase 4.5 (tras generate_meta_analysis, antes de notificaciones Telegram): envuelta en try/except, fallo no aborta el pipeline",
+        "Schema inválido del LLM → log WARNING + skip sin crash (no propaga excepción)",
+        "Tests con mock de call_llm: schema válido genera sugerencias correctas, dedup evita duplicar config existente, dry-run no escribe en BD, recurrence incrementa en segunda llamada con mismo (type, target), schema inválido no crashea"
+      ],
+      "depends_on": [13, 8, 18],
+      "status": "pending"
+    }
+  ]
+}
