@@ -32,7 +32,7 @@
         "No hay sys.path.append en ningún sitio (init.sh §6 lo verifica)"
       ],
       "depends_on": [],
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 2,

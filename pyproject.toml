@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "saas-radar"
+version = "0.1.0"
+description = "Pipeline Python que escanea subreddits buscando dolores reales y los analiza con LLM para detectar oportunidades de micro-SaaS."
+requires-python = ">=3.11"
+dependencies = [
+    "praw>=7.7",
+    "pandas>=2.0",
+    "sqlalchemy>=2.0",
+    "nltk>=3.8",
+    "httpx>=0.27",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.4",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501", "E701"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
