@@ -87,3 +87,14 @@
 - **Verificación:** 57 tests nuevos (109 suite completa) → todos pasan. `ruff check` → All checks passed. Sin `sys.path.append`, sin `print()`, regex compiladas al import.
 - **Review:** APROBADO por reviewer subagente (ciclo 2 tras fix de `import pytest` sin usar).
 - **Cierre:** Feature #5 marcada `done`. Desbloquea: #6 (semantic_score_filter, que también depende de #3 ✓).
+## 2026-05-29 — Feature #4: scraper_reddit_basic
+
+- **Agente:** Claude Sonnet 4.6 (leader) + implementer + reviewer.
+- **Feature:** `scraper_reddit_basic` (#4, M1_foundation).
+- **Archivos creados:**
+  - `src/saas_radar/scrapers/__init__.py`
+  - `src/saas_radar/scrapers/reddit_scraper.py` — `get_reddit()` singleton, `fetch_posts()` (feeds full/incremental, dedup por id), `search_pain_posts()` (multireddit + time_filter en incremental), `fetch_top_comments()` (replace_more + filtro longitud).
+  - `tests/test_reddit_scraper.py` — 10 tests con PRAW mockeado vía MagicMock. Sin llamadas reales a Reddit.
+- **Verificación:** 10/10 tests verdes. `ruff format --check` + `ruff check` → All checks passed. `./init.sh` → OK.
+- **Review:** APPROVED por reviewer subagente (tras fix de formato en segunda ronda).
+- **Cierre:** Feature #4 marcada `done`. Desbloquea: #12 (main_cli_pipeline).

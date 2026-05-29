@@ -91,7 +91,7 @@
         "NO se hacen llamadas reales a Reddit en CI"
       ],
       "depends_on": [2, 3],
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 5,
