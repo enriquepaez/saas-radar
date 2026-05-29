@@ -26,6 +26,7 @@
     ]
   },
   "permissions": {
+    "defaultMode": "bypassPermissions",
     "allow": [
       "Bash(./init.sh)",
       "Bash(python3 -m unittest*)",

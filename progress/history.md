@@ -71,3 +71,17 @@
 - **Verificación:** pytest → todos los tests pasan. `ruff check` → All checks passed. Sin `print()` ni side-effects.
 - **Review:** APPROVED por reviewer subagente.
 - **Cierre:** Feature #3 marcada `done`. Desbloquea: #4 (scraper), #6 (semantic_score), #8 (llm_clients).
+
+---
+
+## 2026-05-29 — Feature #4: scraper_reddit_basic
+
+- **Agente:** Claude Sonnet 4.6 (leader) + implementer + reviewer.
+- **Feature:** `scraper_reddit_basic` (#4, M1_foundation).
+- **Archivos creados:**
+  - `src/saas_radar/scrapers/__init__.py`
+  - `src/saas_radar/scrapers/reddit_scraper.py` — `get_reddit()` singleton, `fetch_posts()` (feeds full/incremental, dedup por id), `search_pain_posts()` (multireddit + time_filter en incremental), `fetch_top_comments()` (replace_more + filtro longitud).
+  - `tests/test_reddit_scraper.py` — 10 tests con PRAW mockeado vía MagicMock. Sin llamadas reales a Reddit.
+- **Verificación:** 10/10 tests verdes. `ruff format --check` + `ruff check` → All checks passed. `./init.sh` → OK.
+- **Review:** APPROVED por reviewer subagente (tras fix de formato en segunda ronda).
+- **Cierre:** Feature #4 marcada `done`. Desbloquea: #12 (main_cli_pipeline).
