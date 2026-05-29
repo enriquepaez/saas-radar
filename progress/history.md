@@ -98,3 +98,16 @@
 - **Verificación:** 10/10 tests verdes. `ruff format --check` + `ruff check` → All checks passed. `./init.sh` → OK.
 - **Review:** APPROVED por reviewer subagente (tras fix de formato en segunda ronda).
 - **Cierre:** Feature #4 marcada `done`. Desbloquea: #12 (main_cli_pipeline).
+
+---
+
+## 2026-05-30 — Feature #6: semantic_score_filter
+
+- **Agente:** Claude Sonnet 4.6 (leader) + implementer + reviewer.
+- **Feature:** `semantic_score_filter` (#6, M2_pipeline_ia).
+- **Archivos creados:**
+  - `src/saas_radar/analysis/pain_filter.py` — `_semantic_score(title, text) -> float`. Pre-compila `_PAIN_PATTERNS` (~120 regex con `\b` inicial desde `PAIN_SIGNAL_PHRASES`) y `_OFFTOPIC_PATTERN` (una regex alternada para `OFF_TOPIC_SIGNALS`) al nivel de módulo. Lógica: showcase (-99) → off-topic (-50) → suma señales de dolor con bonus x0.5 si la señal aparece también en el título.
+  - `tests/test_pain_filter.py` — 22 tests: criterios de acceptance + cobertura exhaustiva de cada prefijo showcase y señal off-topic reales de `config.py`.
+- **Verificación:** 22/22 tests verdes. `ruff check` → All checks passed (fix de import order en segunda ronda). `./init.sh` → OK.
+- **Review:** APROBADO por reviewer subagente (ciclo 2 tras fix de `import pytest` sin usar + I001 import order).
+- **Cierre:** Feature #6 marcada `done`. Desbloquea: #7 (data_loader_with_ranking, que también depende de #2 ✓).

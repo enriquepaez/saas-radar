@@ -17,5 +17,4 @@ _Sin actividad._
 
 ## Próximo paso
 
-_Arrancar feature #6 (semantic_score_filter) — depende de #3 ✓._
-_Arrancar feature #5 (text_cleaning_and_classifier) — depende de #1 ✓._
+_Arrancar feature #7 (data_loader_with_ranking) — depende de #2 ✓ y #6 ✓._

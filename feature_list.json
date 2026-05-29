@@ -127,7 +127,7 @@
         "Tests usan las listas PAIN_SIGNAL_PHRASES / SHOWCASE_TITLE_PREFIXES / OFF_TOPIC_SIGNALS reales de config.py"
       ],
       "depends_on": [3],
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 7,
