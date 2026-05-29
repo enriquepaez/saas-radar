@@ -138,3 +138,16 @@
 - **Verificación:** 22/22 tests verdes. `ruff check` → All checks passed (fix de import order en segunda ronda). `./init.sh` → OK.
 - **Review:** APROBADO por reviewer subagente (ciclo 2 tras fix de `import pytest` sin usar + I001 import order).
 - **Cierre:** Feature #6 marcada `done`. Desbloquea: #7 (data_loader_with_ranking, que también depende de #2 ✓).
+
+---
+
+## 2026-05-30 — Feature #9: extraction_batch_and_deep
+
+- **Agente:** Claude Sonnet 4.6 (leader) + implementer + reviewer.
+- **Feature:** `extraction_batch_and_deep` (#9, M2_pipeline_ia).
+- **Archivos creados:**
+  - `src/saas_radar/analysis/extraction.py` — 3 prompts LLM (EXTRACTION_PROMPT, DEEP_EXTRACTION_PROMPT, EXTRACTION_BATCH_PROMPT); funciones de extracción: `extract_problem_from_post`, `_fetch_comments_for_post`, `extract_problem_deep`, `extract_problems_batch`, `run_batch_extraction` (con circuit breaker tras 3 batches fallidos consecutivos), `extract_problems` (bifurcación ≤30→deep, >30→batch); 4 funciones puras de limpieza: `_drop_who_vago`, `_drop_non_saas`, `_fix_workaround` (con inferencia desde `_WORKAROUND_KEYWORDS`), `_fix_payment_signal`; orquestadora `_clean_extractions`.
+  - `tests/test_extraction.py` — 16 tests con mocks de `call_llm` y `_fetch_comments_for_post`. Sin llamadas reales a LLM ni BD.
+- **Verificación:** 16/16 tests verdes. `ruff check` → All checks passed. `./init.sh` → OK.
+- **Review:** APROBADO por reviewer subagente (ciclo 2 tras añadir función `extract_problems` orquestadora que aplicaba la bifurcación deep/batch).
+- **Cierre:** Feature #9 marcada `done`. Desbloquea: #10 (synthesis_with_validation).
