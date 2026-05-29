@@ -17,4 +17,4 @@ _Sin actividad._
 
 ## Próximo paso
 
-_Arrancar feature #7 (data_loader_with_ranking) — depende de #2 ✓ y #6 ✓._
+_Arrancar feature #8 (llm_clients_dispatcher) — depende de #3 ✓._

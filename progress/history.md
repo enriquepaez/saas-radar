@@ -101,6 +101,19 @@
 
 ---
 
+## 2026-05-30 — Feature #7: data_loader_with_ranking
+
+- **Agente:** Claude Sonnet 4.6 (leader) + implementer + reviewer.
+- **Feature:** `data_loader_with_ranking` (#7, M2_pipeline_ia).
+- **Archivos creados:**
+  - `src/saas_radar/analysis/data_loader.py` — `load_pain_posts(min_score, top_n, include_comments, post_age_days)` con filtros (SUBREDDITS, PAIN_CATEGORIES, score, len(text), created_utc), recálculo de `_semantic_score`, merge de comentarios como posts virtuales y ranking blend 0.10/0.15/0.75 normalizado por subreddit. Cap por subreddit: HIGH_SIGNAL→10, default→4. `load_pain_comments_as_posts()` carga comentarios >200 chars, aplica `_semantic_score`, genera pseudo-título (primera frase ≤120 chars) y mapea a forma de reddit_posts con source='comment'.
+  - `tests/test_data_loader.py` — 15 tests con BD temporal (tmp_path) y monkey-patch de `saas_radar.analysis.data_loader.engine`. Cubre: filtro temporal, semántico, de score, de categoría, ranking, cap high-signal y default, comentarios como posts virtuales, pseudo-título, merge, top_n.
+- **Verificación:** 156 tests (15 nuevos) → todos pasan. `ruff check` → All checks passed. Sin `print()` en capa analysis (usa `logger.*`). `./init.sh` → OK.
+- **Review:** APROBADO por reviewer subagente (ciclo 2 tras fix de print→logger y orden de imports en test file).
+- **Cierre:** Feature #7 marcada `done`. Desbloquea: #9 (extraction_batch_and_deep, junto con #8).
+
+---
+
 ## 2026-05-30 — Feature #6: semantic_score_filter
 
 - **Agente:** Claude Sonnet 4.6 (leader) + implementer + reviewer.
