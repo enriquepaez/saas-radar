@@ -201,7 +201,7 @@
         "Top_3_recommended se reconstruye con solo ids supervivientes"
       ],
       "depends_on": [9],
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 11,
