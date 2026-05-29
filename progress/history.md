@@ -151,3 +151,16 @@
 - **Verificación:** 16/16 tests verdes. `ruff check` → All checks passed. `./init.sh` → OK.
 - **Review:** APROBADO por reviewer subagente (ciclo 2 tras añadir función `extract_problems` orquestadora que aplicaba la bifurcación deep/batch).
 - **Cierre:** Feature #9 marcada `done`. Desbloquea: #10 (synthesis_with_validation).
+
+---
+
+## 2026-05-30 — Feature #10: synthesis_with_validation
+
+- **Agente:** Claude Sonnet 4.6 (leader) + implementer + reviewer.
+- **Feature:** `synthesis_with_validation` (#10, M2_pipeline_ia).
+- **Archivos creados:**
+  - `src/saas_radar/analysis/synthesis.py` — `build_synthesis_prompt(extractions)` con pre-clustering por subreddit (orden count desc), separadores `### CLUSTER: r/<sub> (N items) ###`, numeración global [1..N] y prompt completo con RULES 1-7. `_validate_synthesis(results, ordered_extractions)` con check de cantidad mínima (≥2 items y ≥2 quotes) y check de coherencia léxica sobre `problem_description` real del item (no sobre `evidence_quotes` del LLM). Helpers: `_COHERENCE_STOP` (stopwords funcionales + raíces de dominio: manu, trac, spre, exce, etc.), `_SHORT_TOOL_NAMES`, `_coherence_words`, `_quotes_are_coherent`. Logger estructurado (`logging.getLogger(__name__)`); cero `print()`.
+  - `tests/test_synthesis.py` — 15 tests cubriendo todos los acceptance criteria.
+- **Verificación:** 209 tests (15 nuevos) → todos pasan en 0.88s. `ruff check` → All checks passed. `./init.sh` → OK.
+- **Review:** APROBADO por reviewer subagente (ciclo 2 tras añadir logger y convertir 7 `print()` a `logger.debug/info`).
+- **Cierre:** Feature #10 marcada `done`. Desbloquea: #11 (ai_analyzer_orchestrator).

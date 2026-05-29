@@ -17,4 +17,4 @@ _Sin actividad._
 
 ## Próximo paso
 
-_Arrancar feature #10 (synthesis_with_validation) — depende de #9 ✓._
+_Arrancar feature #11 (ai_analyzer_orchestrator) — depende de #2 ✓ y #10 ✓._
