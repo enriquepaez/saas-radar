@@ -17,4 +17,4 @@ _Sin actividad._
 
 ## Próximo paso
 
-_Arrancar feature #4 (scraper_reddit_basic) — depende de #2 ✓ y #3 ✓._
+_Arrancar feature #6 (semantic_score_filter) — depende de #3 ✓._

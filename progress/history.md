@@ -71,3 +71,19 @@
 - **Verificación:** pytest → todos los tests pasan. `ruff check` → All checks passed. Sin `print()` ni side-effects.
 - **Review:** APPROVED por reviewer subagente.
 - **Cierre:** Feature #3 marcada `done`. Desbloquea: #4 (scraper), #6 (semantic_score), #8 (llm_clients).
+
+---
+
+## 2026-05-29 — Feature #5: text_cleaning_and_classifier
+
+- **Agente:** Claude Sonnet 4.6 (leader) + implementer + reviewer.
+- **Feature:** `text_cleaning_and_classifier` (#5, M2_pipeline_ia).
+- **Archivos creados:**
+  - `src/saas_radar/analysis/__init__.py`
+  - `src/saas_radar/analysis/text_cleaning.py` — `clean_text` (elimina URLs, puntuación, stopwords EN+ES con NLTK), `normalize_for_classifier` (versión leve: lowercase + colapsa espacios, preserva `?` y `$`).
+  - `src/saas_radar/analysis/post_classifier.py` — `classify_post` con 6 categorías (showcase > pain_point > question_operational > question_technical > discussion > other), listas PAIN_KEYWORDS/SHOWCASE_KEYWORDS/EMOTIONAL_KEYWORDS/OPERATIONAL_KEYWORDS replicadas del legacy.
+  - `tests/test_text_cleaning.py` — 24 tests.
+  - `tests/test_post_classifier.py` — 33 tests.
+- **Verificación:** 57 tests nuevos (109 suite completa) → todos pasan. `ruff check` → All checks passed. Sin `sys.path.append`, sin `print()`, regex compiladas al import.
+- **Review:** APROBADO por reviewer subagente (ciclo 2 tras fix de `import pytest` sin usar).
+- **Cierre:** Feature #5 marcada `done`. Desbloquea: #6 (semantic_score_filter, que también depende de #3 ✓).

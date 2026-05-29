@@ -110,7 +110,7 @@
         "Listas PAIN_KEYWORDS/SHOWCASE_KEYWORDS/EMOTIONAL_KEYWORDS/OPERATIONAL_KEYWORDS replicadas del legacy"
       ],
       "depends_on": [1],
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 6,
