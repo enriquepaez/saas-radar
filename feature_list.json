@@ -146,7 +146,7 @@
         "Tests con BD temporal fixture: filtro temporal, semántico, ranking estable, cap correcto"
       ],
       "depends_on": [2, 6],
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 8,

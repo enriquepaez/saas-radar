@@ -13,6 +13,14 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_DB_URL = "sqlite:///data/saas.db"
 
+# Engine global para uso desde módulos de análisis (data_loader, etc.).
+# Se construye al importar el módulo usando DB_URL del entorno (o el default).
+# Los tests hacen monkey-patch de saas_radar.analysis.data_loader.engine, no de este.
+engine = create_engine(
+    os.environ.get("DB_URL", _DEFAULT_DB_URL),
+    connect_args={"check_same_thread": False},
+)
+
 # ---------------------------------------------------------------------------
 # DDL — tablas e índices
 # ---------------------------------------------------------------------------
