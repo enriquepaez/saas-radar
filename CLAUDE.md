@@ -52,8 +52,16 @@ Cuando el reviewer aprueba, **antes de cerrar la sesión**:
    feat(#<id>): <brief description of what was implemented>
    ```
 3. **Pide confirmación explícita** antes de ejecutar nada.
-4. Solo si el usuario confirma: `git add <archivos concretos>`, `git commit -m "..."`, `git push -u origin <rama>`.
+4. Solo si el usuario confirma — **en este orden exacto**:
+   a. Marca la feature como `"status": "done"` en `feature_list.json`. ⚠️ **CRÍTICO: hacerlo ANTES del commit, no después.**
+   b. Mueve el resumen de `progress/current.md` al final de `progress/history.md` y vacía `current.md`.
+   c. `git add <archivos concretos>`, `git commit -m "..."`, `git push -u origin <rama>`.
 5. Si el usuario pide cambios en el mensaje, ajusta y vuelve a pedir confirmación.
+
+> **Por qué el orden importa:** si el commit/push ocurre antes de marcar `done`,
+> una sesión interrumpida deja `feature_list.json` en `in_progress` aunque el
+> PR esté mergeado. Eso desincroniza el estado y bloquea la detección automática
+> de qué feature es la siguiente.
 
 **Regla dura:** nunca hagas commit, push ni cambio de rama sin confirmación explícita del usuario en ese turno.
 

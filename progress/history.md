@@ -44,3 +44,30 @@
 - **Verificación:** `pip install -e .[dev]` + `pytest` → 2 passed. `./init.sh` → OK.
 - **Review:** APPROVED por reviewer subagente.
 - **Cierre:** feature #1 marcada `done`. Desbloquea: #2 (db_layer), #3 (config), #5 (text_cleaning), #8 (llm_clients), #14 (telegram).
+
+---
+
+## 2026-05-29 — Feature #2: db_layer_with_migrations
+
+- **Agente:** Claude Sonnet 4.6 (leader) + implementer + reviewer.
+- **Feature:** `db_layer_with_migrations` (#2, M1_foundation).
+- **Archivos creados:**
+  - `src/saas_radar/storage/__init__.py`
+  - `src/saas_radar/storage/db.py` — `init_db`, `save_to_db`, `load_from_db`, `db_stats`, `persist_run_to_db`, `load_active_opportunities`, `persist_meta_recommendations`, `has_successful_run`.
+  - `tests/test_db.py` — 18 tests.
+- **Verificación:** 18 passed en 0.36s. `ruff check` → All checks passed. `./init.sh` → OK.
+- **Review:** APPROVED por reviewer subagente. Deficiencia menor: no hay test ejecutable contra `data/saas.db` heredada (análisis estático concluyente, no bloqueante).
+- **Cierre:** PR #2 mergeado en `main`. Feature #2 marcada `done`. Desbloquea: #3 (config), #4 (scraper), #7 (data_loader), #15 (dedup), #19 (logging).
+
+---
+
+## 2026-05-29 — Feature #3: config_module
+
+- **Agente:** Claude Sonnet 4.6 (leader) + implementer + reviewer.
+- **Feature:** `config_module` (#3, M1_foundation).
+- **Archivos creados:**
+  - `src/saas_radar/config.py` — todas las constantes del legacy: scraping, AI/LLM, scoring, SUBREDDITS (36), HIGH_SIGNAL_SUBREDDITS, PAIN_SEARCH_QUERIES, PAIN_SIGNAL_PHRASES (~120 tuplas), SHOWCASE_TITLE_PREFIXES, OFF_TOPIC_SIGNALS.
+  - `tests/test_config.py` — tests de env overrides, tipos y longitudes.
+- **Verificación:** pytest → todos los tests pasan. `ruff check` → All checks passed. Sin `print()` ni side-effects.
+- **Review:** APPROVED por reviewer subagente.
+- **Cierre:** Feature #3 marcada `done`. Desbloquea: #4 (scraper), #6 (semantic_score), #8 (llm_clients).
