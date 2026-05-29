@@ -17,4 +17,4 @@ _Sin actividad._
 
 ## Próximo paso
 
-_Arrancar feature #9 (extraction_batch_and_deep) — depende de #7 ✓ y #8 ✓._
+_Arrancar feature #10 (synthesis_with_validation) — depende de #9 ✓._
