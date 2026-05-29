@@ -52,7 +52,7 @@
         "Todos los índices del legacy se replican (idx_posts_subreddit, idx_opps_canonical, etc.)"
       ],
       "depends_on": [1],
-      "status": "in_progress"
+      "status": "done"
     },
     {
       "id": 3,
@@ -71,7 +71,7 @@
         "Las constantes documentadas en docs/legacy-context/inventory.md §1.2 están presentes"
       ],
       "depends_on": [1],
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 4,
