@@ -47,9 +47,9 @@ Cada feature se trabaja en su propia rama. El usuario hace el merge desde GitHub
 Cuando el reviewer aprueba, **antes de cerrar la sesión**:
 
 1. Muestra el resumen de archivos modificados (`git status` + `git diff --stat`).
-2. Propón el mensaje de commit: una sola línea, sin cuerpo ni trailers:
+2. Propón el mensaje de commit: una sola línea, sin cuerpo ni trailers, **en inglés**:
    ```
-   feat(#<id>): <descripción breve de lo implementado>
+   feat(#<id>): <brief description of what was implemented>
    ```
 3. **Pide confirmación explícita** antes de ejecutar nada.
 4. Solo si el usuario confirma: `git add <archivos concretos>`, `git commit -m "..."`, `git push -u origin <rama>`.

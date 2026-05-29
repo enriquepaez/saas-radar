@@ -52,7 +52,7 @@
         "Todos los índices del legacy se replican (idx_posts_subreddit, idx_opps_canonical, etc.)"
       ],
       "depends_on": [1],
-      "status": "pending"
+      "status": "in_progress"
     },
     {
       "id": 3,
