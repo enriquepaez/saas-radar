@@ -114,6 +114,20 @@
 
 ---
 
+## 2026-05-30 — Feature #8: llm_clients_dispatcher
+
+- **Agente:** Claude Sonnet 4.6 (leader) + implementer + reviewer.
+- **Feature:** `llm_clients_dispatcher` (#8, M2_pipeline_ia).
+- **Archivos creados:**
+  - `src/saas_radar/analysis/llm_clients.py` — `_parse_json_payload` (extrae JSON de fences markdown o JSON pelado, usando `re.sub` en lugar de `lstrip` para evitar bug de caracteres), `call_claude` (Anthropic Messages API con retry sobre `retry-after` header), `call_gemini` (Google AI Studio con retry sobre `retryDelay`), `call_groq` (API OpenAI-compatible con retry sobre texto "Please try again in Xs"), `call_llm` dispatcher (recibe `provider` como argumento explícito, nunca lee/muta `config.AI_PROVIDER`; selecciona modelo según `phase`: synthesis→CLAUDE_SYNTHESIS_MODEL, extraction→CLAUDE_EXTRACTION_MODEL).
+  - `tests/test_llm_clients.py` — 22 tests con `respx` mocks. Sin llamadas reales a ninguna API.
+  - `pyproject.toml` — añade `respx>=0.21` a `[project.optional-dependencies].dev`.
+- **Verificación:** 22 tests nuevos (178 suite completa) → todos pasan en 0.86s. `ruff check` → All checks passed. `./init.sh` → OK.
+- **Review:** APROBADO por reviewer subagente. Todos los acceptance criteria verificados.
+- **Cierre:** Feature #8 marcada `done`. Desbloquea: #9 (extraction_batch_and_deep, junto con #7 ✓).
+
+---
+
 ## 2026-05-30 — Feature #6: semantic_score_filter
 
 - **Agente:** Claude Sonnet 4.6 (leader) + implementer + reviewer.

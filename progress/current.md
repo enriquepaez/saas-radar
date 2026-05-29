@@ -17,4 +17,4 @@ _Sin actividad._
 
 ## Próximo paso
 
-_Arrancar feature #8 (llm_clients_dispatcher) — depende de #3 ✓._
+_Arrancar feature #9 (extraction_batch_and_deep) — depende de #7 ✓ y #8 ✓._
