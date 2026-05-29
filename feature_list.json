@@ -164,7 +164,7 @@
         "Tests verifican que NO se muta config.AI_PROVIDER en ningún caller (cambio respecto al legacy)"
       ],
       "depends_on": [3],
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 9,
