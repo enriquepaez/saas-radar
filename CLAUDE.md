@@ -38,9 +38,9 @@ Cada feature se trabaja en su propia rama. El usuario hace el merge desde GitHub
 #### Flujo de rama
 
 - Al arrancar una feature, crea la rama: `git checkout -b feat/<id>-<name>` (p.ej. `feat/2-db_layer_with_migrations`).
-- Todo el trabajo de esa feature va en esa rama.
+- Todo el trabajo de esa feature va en esa rama. **Esto incluye fixes y correcciones que surjan durante la verificación.**
 - Al terminar, push de la rama. El usuario abre y mergea el PR desde GitHub.
-- No hagas merge a `main` tú mismo.
+- ❌ **NUNCA hagas commit ni push directamente a `main`**, ni para features, ni para fixes, ni para correcciones menores. Sin excepción.
 
 #### Commit al cierre
 
