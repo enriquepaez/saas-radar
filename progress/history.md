@@ -5,6 +5,25 @@
 
 ---
 
+## Sesión 2026-05-30 — Feature #19: logging_structured_l1_l2
+
+- **Rama:** `feat/19-logging_structured_l1_l2`
+- **Estado final:** APROBADO por reviewer
+
+### Lo que se hizo
+
+1. Creado `src/saas_radar/logging_setup.py` con `setup_logging(level, fmt)`: formato JSON (parseable) y texto humano, `stream=sys.stdout encoding='utf-8'`, idempotente.
+2. Migrado `notifications/telegram.py`: 3 `print()` → `logger.warning`, añadido `logger = logging.getLogger(__name__)`.
+3. Wiring en `main.py`: llama `setup_logging(LOG_LEVEL, LOG_FORMAT)` al inicio.
+4. Creado `tests/test_logging_setup.py` con 8 tests (JSON, texto, niveles, idempotencia, encoding).
+5. Actualizado `tests/test_telegram.py` para usar caplog.
+
+### Resultado
+
+Suite completa pasa (exit code 0). Reviewer aprobó todos los acceptance criteria.
+
+---
+
 ## Sesión 2026-05-30 — Feature #16: github_actions_pipeline_workflow
 
 - Workflow `.github/workflows/pipeline.yml` con cron diario `0 8 * * *` y `workflow_dispatch`

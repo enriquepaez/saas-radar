@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import os
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 
 def _get_config() -> tuple[str, str, int]:
@@ -102,7 +105,7 @@ def send_tuner_report(report_path: str) -> bool:
         with open(report_path, encoding="utf-8") as f:
             report = f.read()
     except OSError as exc:
-        print(f"  [WARN] no se pudo leer {report_path}: {exc}")
+        logger.warning("no se pudo leer %s: %s", report_path, exc)
         return False
 
     max_body = 3900
@@ -127,11 +130,11 @@ def _send_message(token: str, chat_id: str, text: str) -> bool:
             timeout=10,
         )
         if not resp.is_success:
-            print(f"  [WARN] Telegram error: {resp.status_code} - {resp.text[:200]}")
+            logger.warning("Telegram error: %s - %s", resp.status_code, resp.text[:200])
             return False
         return True
     except Exception as exc:
-        print(f"  [WARN] Telegram error: {exc}")
+        logger.warning("Telegram error: %s", exc)
         return False
 
 
