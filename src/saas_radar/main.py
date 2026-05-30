@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
 
 from saas_radar.analysis.ai_analyzer import run_ai_analysis
+from saas_radar.logging_setup import setup_logging
 from saas_radar.analysis.pain_filter import _semantic_score
 from saas_radar.analysis.post_classifier import classify_post
 from saas_radar.analysis.text_cleaning import clean_text
@@ -238,6 +239,11 @@ def run_pipeline(
 
 
 if __name__ == "__main__":
+    setup_logging(
+        level=os.getenv("LOG_LEVEL", "INFO"),
+        fmt=os.getenv("LOG_FORMAT", "text"),
+    )
+
     parser = argparse.ArgumentParser(
         description="Reddit SaaS Radar — pipeline completo",
         formatter_class=argparse.RawDescriptionHelpFormatter,

@@ -80,17 +80,19 @@ def test_trunca_reporte_largo(monkeypatch, tmp_path):
     assert len(text) < 4096
 
 
-def test_fichero_inexistente(monkeypatch, capsys):
+def test_fichero_inexistente(monkeypatch, caplog):
     """Si el fichero no existe, devuelve False y el warning menciona 'no se pudo leer'."""
+    import logging
+
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "cid")
     monkeypatch.setattr(tg, "_send_message", lambda *a: True)
 
-    result = tg.send_tuner_report("/tmp/fichero_que_no_existe_xyzabc.txt")
+    with caplog.at_level(logging.WARNING, logger="saas_radar.notifications.telegram"):
+        result = tg.send_tuner_report("/tmp/fichero_que_no_existe_xyzabc.txt")
 
     assert result is False
-    captured = capsys.readouterr()
-    assert "no se pudo leer" in captured.out
+    assert any("no se pudo leer" in r.message for r in caplog.records)
 
 
 # ── send_text ─────────────────────────────────────────────────────────────────

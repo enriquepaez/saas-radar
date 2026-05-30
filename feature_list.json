@@ -358,7 +358,7 @@
         "Forzar stream=sys.stdout con encoding='utf-8' (workaround Windows cp1252 documentado en CLAUDE.md del legacy)"
       ],
       "depends_on": [2],
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 20,
