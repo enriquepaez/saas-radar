@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   run:
@@ -40,38 +40,12 @@ jobs:
           ref: main
           fetch-depth: 1
 
-      - name: Checkout data branch into persist/
-        id: checkout_data
-        uses: actions/checkout@v4
-        continue-on-error: true
+      - name: Restore saas.db from cache
+        uses: actions/cache@v4
         with:
-          ref: data
-          path: persist
-          fetch-depth: 1
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Create data branch if it does not exist
-        if: steps.checkout_data.outcome == 'failure'
-        run: |
-          cd persist
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
-          git checkout --orphan data
-          git rm -rf . 2>/dev/null || true
-          mkdir -p data/runs
-          git commit --allow-empty -m "chore: init data branch"
-          git push origin data
-
-      - name: Restore saas.db from persist/
-        run: |
-          mkdir -p data/runs
-          if [ -f persist/data/saas.db ]; then
-            cp persist/data/saas.db data/saas.db
-            echo "Restored data/saas.db from persist/ ($(du -sh data/saas.db | cut -f1))"
-          else
-            echo "No prior saas.db found — starting fresh"
-          fi
+          path: data/saas.db
+          key: saas-db-${{ github.run_id }}
+          restore-keys: saas-db-
 
       - name: Setup Python 3.11
         uses: actions/setup-python@v5
@@ -85,6 +59,9 @@ jobs:
       - name: Download NLTK stopwords
         run: python -c "import nltk; nltk.download('stopwords', quiet=True)"
 
+      - name: Prepare data directories
+        run: mkdir -p data/runs
+
       - name: Run pipeline
         run: |
           if [ "${{ github.event.inputs.full_scan }}" = "true" ]; then
@@ -93,23 +70,11 @@ jobs:
             python -m saas_radar.main
           fi
 
-      - name: Copy outputs to persist/
-        run: |
-          mkdir -p persist/data/runs
-          cp data/saas.db persist/data/saas.db
-          if ls data/runs/*.json 2>/dev/null | head -1 > /dev/null; then
-            cp data/runs/*.json persist/data/runs/ 2>/dev/null || true
-          fi
-
-      - name: Commit and push to data branch
-        run: |
-          cd persist
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/
-          if ! git diff --cached --quiet; then
-            git commit -m "chore: pipeline run $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            git push origin data
-          else
-            echo "No changes to commit"
-          fi
+      - name: Upload run outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: run-outputs-${{ github.run_id }}
+          path: data/runs/
+          retention-days: 30
+          if-no-files-found: ignore

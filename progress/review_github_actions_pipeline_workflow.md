@@ -1,64 +1,62 @@
-# Review — feature #16: github_actions_pipeline_workflow
+# Review — feature #16 github_actions_pipeline_workflow
 
-**Veredicto:** CHANGES_REQUESTED
+**Veredicto:** APPROVED
 
 ## Acceptance criteria
 
-- AC1 [x]: Workflow disparable con `gh workflow run 'saas-radar pipeline' -f full_scan=true`. El nombre del workflow es exactamente `saas-radar pipeline` (línea 1 de `pipeline.yml`) y el input `full_scan` de tipo `boolean` está definido en `workflow_dispatch.inputs` (líneas 6-12).
-- AC2 [x]: El job no tiene `set -e` en el step "Run pipeline" (líneas 83-89). El step se ejecuta directamente con `if/else` y termina con el exit code de `python -m saas_radar.main`, que no llama a `sys.exit(1)` en caso de status `partial`. Sin `set -e` la shell no propaga errores intermedios que no sean el comando final, lo que es correcto.
-- AC3 [x]: La guarda `git diff --cached --quiet` está presente en el step "Commit and push to data branch" (línea 105 de `pipeline.yml`): `if ! git diff --cached --quiet; then`.
-- AC4 [x]: Bloque `concurrency` con `group: 'saas-radar'` y `cancel-in-progress: false` presente en líneas 14-16.
-- AC5 [x]: Secrets documentados en `progress/impl_github_actions_pipeline_workflow.md` (tabla de 9 secrets: `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, `REDDIT_USER_AGENT`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `AI_PROVIDER`). Todos los que exige el acceptance criterion están presentes.
-- AC6 [ ]: **"Verificación manual: 1 run real en GitHub con artefactos correctos (documentar en progress/)"** — El impl doc documenta los pasos a seguir pero no evidencia que el run haya ocurrido. Los ejemplos de salida en la sección "Paso 4" son placeholders (`a1b2c3d chore: pipeline run 2026-05-30T08:00:01Z`) sin timestamps reales ni IDs reales. No hay pantallazos, logs copiados ni referencia a un `gh run view` con ID real.
+- AC1: [x] Workflow disparable con `gh workflow run 'saas-radar pipeline' -f full_scan=true` — nombre del workflow es `saas-radar pipeline` (verificado en YAML y en `test_workflow_name`).
+- AC2: [x] Job termina verde — run ID 26683979527, success, 17m28s, documentado en `progress/impl_github_actions_pipeline_workflow.md`.
+- AC3: [x] Guard `git diff --cached --quiet` — no aplica, lógica de rama `data` eliminada por completo.
+- AC4: [x] `concurrency: group: 'saas-radar', cancel-in-progress: false` — presente en `.github/workflows/pipeline.yml` líneas 16-17, cubierto por `test_has_concurrency_config`.
+- AC5: [x] Secrets documentados — tabla de 9 secrets en `progress/impl_github_actions_pipeline_workflow.md` y validados por `test_has_required_env_secrets`.
+- AC6: [x] Evidencia de run real documentada — run 26683979527, success, 17m28s, 2026-05-30T12:36:53Z.
 
-## Problemas críticos (bloquean aprobación)
+## Checkpoints CHECKPOINTS.md
 
-### P1 — `pyyaml` declarada en la sección incorrecta de `pyproject.toml`
+- C1: [x] Arnés completo — `./init.sh` termina con exit code 0 (`[OK] Entorno listo`). Los 4 archivos base y los 3 docs del proyecto existen.
+- C2: [x] Estado coherente — `feature_list.json` tiene exactamente una feature `in_progress` (#16). No hay features `done` que dependan de `pending`.
+- C3: [x] Arquitectura respetada — los únicos archivos modificados en esta feature son `.github/workflows/pipeline.yml` y `tests/test_pipeline_workflow.py`. No hay cambios en `src/`. No hay `sys.path.append`. Los módulos `.py` del paquete no se tocan.
+- C4: [x] Tests reales — 19 tests en `tests/test_pipeline_workflow.py`, todos verdes. Suite completa: 282 passed in 232.02s (exit code 0). Ningún test hace llamadas reales a GH Actions (validan estructura YAML estática).
+- C5: [x] No aplica directamente a esta feature (no modifica `storage/db.py` ni el schema).
+- C6: [ ] Sesión no cerrada aún — `progress/current.md` describe la sesión activa correctamente. `progress/history.md` no tiene entrada para #16 todavía. Esto es esperado: el cierre lo hace el leader tras este veredicto.
 
-`pyproject.toml` líneas 41-44:
+## Análisis técnico de los ítems de revisión
 
-```toml
-[dependency-groups]
-dev = [
-    "pyyaml>=6.0.3",
-]
-```
+### 1. `.github/workflows/pipeline.yml` — diseño `actions/cache@v4`
 
-`pyyaml` debería estar en `[project.optional-dependencies].dev` (líneas 20-24), junto a `pytest`, `ruff` y `respx`. La sección `[dependency-groups]` es un formato PEP 735 gestionado exclusivamente por `uv` — `pip install -e ".[dev]"` (el comando del workflow en el step "Install dependencies", línea 78) NO lee `[dependency-groups]` y por tanto NO instalaría `pyyaml` en el runner de GitHub Actions.
+El patrón `key: saas-db-${{ github.run_id }}` + `restore-keys: saas-db-` es correcto para el objetivo "siempre restaurar la BD más reciente":
 
-Consecuencia: `tests/test_pipeline_workflow.py` fallaría con `ModuleNotFoundError: No module named 'yaml'` en cualquier entorno que use pip estándar (incluido el runner de CI). Los tests pasan localmente porque el venv fue creado con `uv` que sí procesa `[dependency-groups]`.
+- `key` única por run (run_id es entero monotónico) → Actions crea una entrada nueva al final de cada run con la BD actualizada.
+- `restore-keys: saas-db-` es prefijo → Actions busca la entrada más reciente que empiece por ese prefijo, que siempre es el run anterior.
+- La alternativa con key fija (`saas-db-latest`) no funcionaría: Actions solo guarda cache cuando no hay coincidencia exacta de key, por lo que con key fija el cache nunca se actualizaría tras el primer run.
 
-**Corrección requerida:** mover `"pyyaml>=6.0.3"` de `[dependency-groups].dev` a `[project.optional-dependencies].dev`:
+Punto a notar (no bloqueante): el paso "Restore saas.db from cache" ocurre ANTES de "Prepare data directories" (`mkdir -p data/runs`). Si el cache restaura `data/saas.db`, el directorio `data/` existirá, pero `data/runs/` no se garantiza hasta el paso siguiente. El orden actual es correcto: cache (restaura `data/saas.db`), setup-python, install, NLTK, mkdir `data/runs`, run. No hay race condition.
 
-```toml
-[project.optional-dependencies]
-dev = [
-    "pytest>=8.0",
-    "ruff>=0.4",
-    "respx>=0.21",
-    "pyyaml>=6.0.3",
-]
-```
+`permissions: contents: read` es correcto — sin operaciones git de escritura en el workflow, el principio de menor privilegio está bien aplicado.
 
-Y eliminar el bloque `[dependency-groups]` completo.
+### 2. `tests/test_pipeline_workflow.py` — 19 tests
 
-### P2 — AC6 no cumplido: falta evidencia de run real en GitHub
+Los 19 tests cubren adecuadamente el nuevo diseño:
 
-El acceptance criterion 6 exige "1 run real en GitHub con artefactos correctos (documentar en progress/)". El impl doc contiene solo instrucciones sobre cómo ejecutar el run, no evidencia de que se ejecutó.
+- Tests nuevos que validan el cache (`test_has_cache_restore_step`, `test_cache_key_uses_run_id`): correctos.
+- `test_no_data_branch_checkout`: verifica regresión — que no vuelva la lógica de rama `data`.
+- `test_has_required_env_secrets`: valida los 9 secrets (antes validaba solo 5).
+- `test_permissions_contents_read`: nuevo, correcto.
+- Tests eliminados (`test_workflow_job_steps_commit_push`, `test_workflow_job_steps_commit_guard`, etc.): correctamente removidos al desaparecer la lógica que cubrían.
+- Todos pasan: `19 passed in 0.03s`.
 
-**Corrección requerida:** ejecutar `gh workflow run 'saas-radar pipeline' -f full_scan=true` en el repo remoto (una vez que la rama esté en GitHub) y añadir al impl doc la salida real de `gh run list --workflow=pipeline.yml --limit=1` con el run ID real y el status final. Si el run falla por falta de secrets en el repo, documentar el error y el estado (`failed` es aceptable, según el propio AC2).
+### 3. `src/saas_radar/main.py` — fix `run_ai_analysis`
 
-## Checkpoints generales
+No hay diff en `main.py` en esta rama — el fix fue mergeado previamente a `main`. Verificado en `main`: línea 214 tiene `provider=os.getenv("AI_PROVIDER", "claude")` como argumento explícito. Correcto según `docs/architecture.md` principio 3 ("configuración por argumento, no por mutación global").
 
-- C1 [x]: Arnés completo. `./init.sh` termina verde (exit code 0).
-- C2 [x]: Solo feature #16 en `in_progress`. Sin incoherencias de dependencias.
-- C3 [x]: No hay `sys.path.append` en `src/`. El archivo de test y el workflow no introducen módulos fuera de las capas previstas. El workflow es infraestructura, no un módulo Python, por lo que no aplica la restricción de capas de `src/saas_radar/`.
-- C4 [x]: 17 tests en `tests/test_pipeline_workflow.py`, todos pasan (`17 passed in 0.03s`). Suite completa: 280 passed, 0 failed. Sin mocks de filesystem; los tests leen el archivo YAML real desde `Path(__file__).parent.parent / ".github" / "workflows" / "pipeline.yml"` — patrón correcto para tests de estructura de workflow. Sin llamadas reales a GitHub.
-- C5 [x]: No aplica directamente (feature #16 no toca la BD). `data/saas.db` existe.
-- C6 [ ]: Sesión aún abierta (feature `in_progress`), no aplica hasta cierre.
+### 4. `CLAUDE.md` — regla "NUNCA commitear en main"
 
-## Observaciones menores (no bloquean)
+No hay diff en `CLAUDE.md` en esta rama — la regla fue añadida en una iteración anterior ya mergeada. Verificado en `main`: la regla existe y está bien expresada: `❌ NUNCA hagas commit ni push directamente a main, ni para features, ni para fixes, ni para correcciones menores. Sin excepción.`
 
-1. El workflow no declara `permissions:` explícitas. El `GITHUB_TOKEN` por defecto tiene permisos de escritura en repositorios privados y en algunos públicos, pero la práctica recomendada de GitHub Actions es declarar `permissions: contents: write` explícitamente cuando el workflow hace push. Aunque funcional, puede romperse si el administrador del repositorio cambia los permisos por defecto del token.
+### 5. `pyproject.toml` — `pyyaml` en `[project.optional-dependencies].dev`
 
-2. El impl doc indica "288 tests, 0 failed" pero la suite real produce 280 passed. Discrepancia menor (probablemente el conteo se hizo antes de que alguna feature de tests cambiara el número total), no afecta a la validez de los 17 tests nuevos.
+No hay diff en `pyproject.toml` en esta rama — el cambio fue mergeado anteriormente. Verificado en `main`: `pyyaml>=6.0.3` está en `[project.optional-dependencies].dev`, NO en `[dependency-groups]`. Correcto.
+
+## Cambios requeridos
+
+Ninguno.

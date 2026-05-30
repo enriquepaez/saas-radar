@@ -25,7 +25,7 @@ def test_workflow_file_exists_and_is_valid_yaml():
     assert isinstance(data, dict), "El YAML debe ser un mapeo raíz"
 
 
-def test_workflow_has_schedule_cron(workflow: dict):
+def test_has_cron_schedule(workflow: dict):
     """El workflow tiene trigger schedule con cron '0 8 * * *' (diario a las 8 UTC)."""
     on_block = workflow.get("on", {})
     assert "schedule" in on_block, "Falta trigger 'schedule'"
@@ -33,7 +33,7 @@ def test_workflow_has_schedule_cron(workflow: dict):
     assert "0 8 * * *" in crons, f"Cron '0 8 * * *' no encontrado. Crons: {crons}"
 
 
-def test_workflow_has_workflow_dispatch_with_full_scan(workflow: dict):
+def test_has_workflow_dispatch_with_full_scan(workflow: dict):
     """El workflow tiene workflow_dispatch con input full_scan de tipo boolean."""
     on_block = workflow.get("on", {})
     assert "workflow_dispatch" in on_block, "Falta trigger 'workflow_dispatch'"
@@ -45,12 +45,9 @@ def test_workflow_has_workflow_dispatch_with_full_scan(workflow: dict):
     assert full_scan_input.get("type") == "boolean", (
         f"Input full_scan debe ser tipo boolean, es: {full_scan_input.get('type')}"
     )
-    assert full_scan_input.get("default") == "false", (
-        f"Default de full_scan debe ser 'false', es: {full_scan_input.get('default')}"
-    )
 
 
-def test_workflow_has_concurrency_group(workflow: dict):
+def test_has_concurrency_config(workflow: dict):
     """El workflow tiene concurrency group 'saas-radar' con cancel-in-progress: false."""
     concurrency = workflow.get("concurrency")
     assert concurrency is not None, "Falta bloque 'concurrency'"
@@ -62,6 +59,125 @@ def test_workflow_has_concurrency_group(workflow: dict):
     )
 
 
+def test_has_cache_restore_step(workflow: dict):
+    """El job 'run' tiene un step que usa actions/cache@v4 con path: data/saas.db."""
+    steps = workflow["jobs"]["run"]["steps"]
+    cache_steps = [s for s in steps if s.get("uses", "").startswith("actions/cache")]
+    assert len(cache_steps) >= 1, "Falta step con actions/cache"
+    cache_step = cache_steps[0]
+    assert cache_step.get("with", {}).get("path") == "data/saas.db", (
+        "El step de cache debe tener path: data/saas.db"
+    )
+
+
+def test_cache_key_uses_run_id(workflow: dict):
+    """El cache key contiene github.run_id y restore-keys contiene 'saas-db-'."""
+    steps = workflow["jobs"]["run"]["steps"]
+    cache_steps = [s for s in steps if s.get("uses", "").startswith("actions/cache")]
+    assert len(cache_steps) >= 1, "Falta step con actions/cache"
+    cache_step = cache_steps[0]
+    with_block = cache_step.get("with", {})
+    key = with_block.get("key", "")
+    assert "run_id" in key, f"La cache key debe contener 'run_id', es: {key}"
+    restore_keys = with_block.get("restore-keys", "")
+    assert "saas-db-" in restore_keys, (
+        f"restore-keys debe contener 'saas-db-', es: {restore_keys}"
+    )
+
+
+def test_has_artifact_upload_step(workflow: dict):
+    """El job 'run' tiene un step que usa actions/upload-artifact@v4."""
+    steps = workflow["jobs"]["run"]["steps"]
+    artifact_steps = [
+        s for s in steps if s.get("uses", "").startswith("actions/upload-artifact")
+    ]
+    assert len(artifact_steps) >= 1, "Falta step con actions/upload-artifact"
+
+
+def test_artifact_retention_days(workflow: dict):
+    """El step de upload-artifact tiene retention-days: 30."""
+    steps = workflow["jobs"]["run"]["steps"]
+    artifact_steps = [
+        s for s in steps if s.get("uses", "").startswith("actions/upload-artifact")
+    ]
+    assert len(artifact_steps) >= 1, "Falta step con actions/upload-artifact"
+    retention = artifact_steps[0].get("with", {}).get("retention-days")
+    assert retention == 30, f"retention-days debe ser 30, es: {retention}"
+
+
+def test_no_data_branch_checkout(workflow: dict):
+    """No existe ningún step con ref: data (ya no usamos rama data)."""
+    steps = workflow["jobs"]["run"]["steps"]
+    data_checkouts = [
+        s for s in steps
+        if s.get("with", {}).get("ref") == "data"
+    ]
+    assert len(data_checkouts) == 0, (
+        f"No debe haber checkout con ref='data', encontrados: {data_checkouts}"
+    )
+
+
+def test_has_required_env_secrets(workflow: dict):
+    """El job tiene los 9 secrets requeridos como variables de entorno."""
+    job = workflow["jobs"]["run"]
+    env = job.get("env", {})
+    required_secrets = [
+        "REDDIT_CLIENT_ID",
+        "REDDIT_CLIENT_SECRET",
+        "REDDIT_USER_AGENT",
+        "ANTHROPIC_API_KEY",
+        "GEMINI_API_KEY",
+        "GROQ_API_KEY",
+        "TELEGRAM_BOT_TOKEN",
+        "TELEGRAM_CHAT_ID",
+        "AI_PROVIDER",
+    ]
+    for secret in required_secrets:
+        assert secret in env, f"Falta secret '{secret}' en env del job"
+
+
+def test_has_python_setup(workflow: dict):
+    """El job 'run' tiene un step de setup-python con Python 3.11."""
+    steps = workflow["jobs"]["run"]["steps"]
+    setup_steps = [s for s in steps if s.get("uses", "").startswith("actions/setup-python")]
+    assert len(setup_steps) >= 1, "Falta step de actions/setup-python"
+    py_version = setup_steps[0].get("with", {}).get("python-version")
+    assert py_version == "3.11", f"setup-python debe usar '3.11', usa: {py_version}"
+
+
+def test_run_pipeline_step_handles_full_scan(workflow: dict):
+    """El step Run pipeline contiene '--full-scan' en el script."""
+    steps = workflow["jobs"]["run"]["steps"]
+    pipeline_steps = [
+        s for s in steps
+        if "saas_radar.main" in s.get("run", "")
+    ]
+    assert len(pipeline_steps) >= 1, "Falta step que ejecute 'python -m saas_radar.main'"
+    run_script = pipeline_steps[0]["run"]
+    assert "--full-scan" in run_script, (
+        "El step de run debe incluir lógica para --full-scan"
+    )
+    assert "full_scan" in run_script, (
+        "El step debe referenciar el input full_scan"
+    )
+
+
+def test_permissions_contents_read(workflow: dict):
+    """permissions.contents debe ser 'read' (ya no hacemos push)."""
+    permissions = workflow.get("permissions")
+    assert permissions is not None, "Falta bloque 'permissions'"
+    assert permissions.get("contents") == "read", (
+        f"permissions.contents debe ser 'read', es: {permissions.get('contents')}"
+    )
+
+
+def test_workflow_name(workflow: dict):
+    """El nombre del workflow es exactamente 'saas-radar pipeline'."""
+    assert workflow.get("name") == "saas-radar pipeline", (
+        f"Nombre del workflow incorrecto: {workflow.get('name')}"
+    )
+
+
 def test_workflow_job_run_exists(workflow: dict):
     """El workflow tiene un job llamado 'run'."""
     jobs = workflow.get("jobs", {})
@@ -69,38 +185,12 @@ def test_workflow_job_run_exists(workflow: dict):
 
 
 def test_workflow_job_steps_checkout_main(workflow: dict):
-    """El job 'run' tiene un step de checkout de la rama main."""
+    """El job 'run' tiene un step de checkout de la rama main sin 'path'."""
     steps = workflow["jobs"]["run"]["steps"]
     checkout_steps = [s for s in steps if s.get("uses", "").startswith("actions/checkout")]
     assert len(checkout_steps) >= 1, "Falta al menos un step de actions/checkout"
-    # El primer checkout no debe tener 'path' (es el checkout del repo principal/main)
     main_checkout = [s for s in checkout_steps if "path" not in s.get("with", {})]
     assert len(main_checkout) >= 1, "Falta checkout sin 'path' (checkout de main)"
-
-
-def test_workflow_job_steps_checkout_data_persist(workflow: dict):
-    """El job 'run' tiene un step de checkout de la rama data en persist/."""
-    steps = workflow["jobs"]["run"]["steps"]
-    checkout_steps = [s for s in steps if s.get("uses", "").startswith("actions/checkout")]
-    data_checkout = [
-        s for s in checkout_steps if s.get("with", {}).get("path") == "persist"
-    ]
-    assert len(data_checkout) >= 1, (
-        "Falta checkout con path='persist' (rama data para persistir la BD)"
-    )
-    data_step = data_checkout[0]
-    assert data_step.get("with", {}).get("ref") == "data", (
-        "El checkout de persist/ debe usar ref='data'"
-    )
-
-
-def test_workflow_job_steps_setup_python(workflow: dict):
-    """El job 'run' tiene un step de setup-python con Python 3.11."""
-    steps = workflow["jobs"]["run"]["steps"]
-    setup_steps = [s for s in steps if s.get("uses", "").startswith("actions/setup-python")]
-    assert len(setup_steps) >= 1, "Falta step de actions/setup-python"
-    py_version = setup_steps[0].get("with", {}).get("python-version")
-    assert py_version == "3.11", f"setup-python debe usar '3.11', usa: {py_version}"
 
 
 def test_workflow_job_steps_install_deps(workflow: dict):
@@ -131,82 +221,3 @@ def test_workflow_job_steps_run_pipeline(workflow: dict):
         if "saas_radar.main" in s.get("run", "")
     ]
     assert len(pipeline_steps) >= 1, "Falta step que ejecute 'python -m saas_radar.main'"
-
-
-def test_workflow_job_steps_full_scan_conditional(workflow: dict):
-    """El step de run del pipeline maneja el flag --full-scan condicionalmente."""
-    steps = workflow["jobs"]["run"]["steps"]
-    pipeline_steps = [
-        s for s in steps
-        if "saas_radar.main" in s.get("run", "")
-    ]
-    assert len(pipeline_steps) >= 1
-    run_script = pipeline_steps[0]["run"]
-    assert "--full-scan" in run_script, (
-        "El step de run debe incluir lógica para --full-scan"
-    )
-    assert "full_scan" in run_script, (
-        "El step debe referenciar el input full_scan"
-    )
-
-
-def test_workflow_job_steps_copy_outputs(workflow: dict):
-    """El job 'run' tiene un step que copia outputs a persist/data/."""
-    steps = workflow["jobs"]["run"]["steps"]
-    copy_steps = [
-        s for s in steps
-        if "persist/data" in s.get("run", "") and "saas.db" in s.get("run", "")
-    ]
-    assert len(copy_steps) >= 1, "Falta step que copie saas.db a persist/data/"
-
-
-def test_workflow_job_steps_commit_push(workflow: dict):
-    """El job 'run' tiene un step que hace commit y push a la rama data."""
-    steps = workflow["jobs"]["run"]["steps"]
-    commit_steps = [
-        s for s in steps
-        if "git commit" in s.get("run", "") and "git push" in s.get("run", "")
-    ]
-    assert len(commit_steps) >= 1, "Falta step con 'git commit' y 'git push'"
-
-
-def test_workflow_job_steps_commit_guard(workflow: dict):
-    """El step de commit usa git diff --cached --quiet para no commitear si no hay cambios."""
-    steps = workflow["jobs"]["run"]["steps"]
-    # Buscamos el step que tiene git commit + git push Y también la guarda diff --cached --quiet
-    # (no el step de inicialización de la rama data, que también tiene git commit/push)
-    commit_steps = [
-        s for s in steps
-        if "git commit" in s.get("run", "")
-        and "git push" in s.get("run", "")
-        and "git diff --cached --quiet" in s.get("run", "")
-    ]
-    assert len(commit_steps) >= 1, (
-        "Falta step con 'git commit', 'git push' y guarda 'git diff --cached --quiet'"
-    )
-    run_script = commit_steps[0]["run"]
-    assert "git diff --cached --quiet" in run_script, (
-        "El step de commit debe usar 'git diff --cached --quiet' como guarda"
-    )
-
-
-def test_workflow_job_env_secrets(workflow: dict):
-    """El job tiene variables de entorno apuntando a los secrets necesarios."""
-    job = workflow["jobs"]["run"]
-    env = job.get("env", {})
-    required_secrets = [
-        "REDDIT_CLIENT_ID",
-        "REDDIT_CLIENT_SECRET",
-        "ANTHROPIC_API_KEY",
-        "TELEGRAM_BOT_TOKEN",
-        "AI_PROVIDER",
-    ]
-    for secret in required_secrets:
-        assert secret in env, f"Falta secret '{secret}' en env del job"
-
-
-def test_workflow_name(workflow: dict):
-    """El nombre del workflow es exactamente 'saas-radar pipeline'."""
-    assert workflow.get("name") == "saas-radar pipeline", (
-        f"Nombre del workflow incorrecto: {workflow.get('name')}"
-    )

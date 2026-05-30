@@ -2,166 +2,63 @@
 
 ## Qué cambió
 
-- **`.github/workflows/pipeline.yml`** (creado): Workflow GitHub Actions con cron diario a las 8 UTC, `workflow_dispatch` con input `full_scan`, checkout dual (rama `main` + rama `data` en `persist/`), restore de `data/saas.db`, install de deps + NLTK, ejecución del pipeline, y commit+push de la BD actualizada a la rama `data` (solo si hay cambios).
+- **`.github/workflows/pipeline.yml`**: reemplazo completo. Antes: checkout dual main+data, creación condicional de rama `data`, restore manual de `saas.db` desde `persist/`, commit y push a rama `data` con guard `git diff --cached --quiet`, `permissions: contents: write`. Después: un solo checkout de `main`, `actions/cache@v4` para persistir `data/saas.db` entre runs, `actions/upload-artifact@v4` para guardar JSONs de `data/runs/`, `permissions: contents: read`.
 
-- **`tests/test_pipeline_workflow.py`** (creado): 17 tests pytest que validan la estructura YAML del workflow, los triggers, la concurrencia, los steps y los secrets.
-
-- **`pyproject.toml`** (modificado): Se añadió `pyyaml` como dependencia de desarrollo (requerida por los tests). Antes solo incluía `pytest`, `ruff` y `respx` en `[dev]`; después también incluye `pyyaml==6.0.3`.
+- **`tests/test_pipeline_workflow.py`**: reemplazo completo. Eliminados los tests que validaban la lógica de rama `data` (`test_workflow_job_steps_checkout_data_persist`, `test_workflow_job_steps_copy_outputs`, `test_workflow_job_steps_commit_push`, `test_workflow_job_steps_commit_guard`). Añadidos: `test_has_cache_restore_step`, `test_cache_key_uses_run_id`, `test_has_artifact_upload_step`, `test_artifact_retention_days`, `test_no_data_branch_checkout`, `test_has_required_env_secrets` (valida los 9 secrets), `test_permissions_contents_read`. Mantenidos los tests que siguen siendo válidos. Total: 19 tests (antes: 17).
 
 ## Por qué
 
-### Por qué checkout dual (main + data)
+El diseño original (checkout de la rama `data` + commit/push de `saas.db`) provocaba el error "file exceeds 50 MB recommended limit" en cada push de GitHub porque `saas.db` es un archivo de 79 MB que supera el umbral de advertencia. `actions/cache@v4` almacena el archivo en el cache de Actions (límite 10 GB por repo, TTL 7 días sin actividad) sin tocarlo como objeto git, resolviendo el error en origen.
 
-El pipeline genera dos artefactos que necesitan persistir entre ejecuciones diarias:
-1. `data/saas.db` — la BD SQLite con los posts scraped y las oportunidades encontradas.
-2. `data/runs/*.json` — los outputs JSON de cada run.
+Alternativa descartada: Git LFS. Requiere activación explícita, migración de histórico, y potencialmente cuota de almacenamiento de pago en GitHub Free. `actions/cache` es gratuito y no requiere cambios estructurales en el repo.
 
-Si se guardaran en `main`, cada ejecución del pipeline crearía un commit de ~79 MB en la historia principal, inflando el repositorio. La convención estándar en proyectos con GitHub Actions es usar una rama huérfana (sin historia común con `main`) exclusivamente para datos. De esta forma, la historia de `main` permanece limpia y la rama `data` actúa como "storage bucket versionado".
-
-El checkout de `persist/` con `ref: data` es el patrón usado por `actions/gh-pages` y similares para este propósito.
-
-### Por qué `continue-on-error: true` en el checkout de `data`
-
-La primera vez que el workflow se ejecuta en un repo nuevo, la rama `data` no existe. Sin `continue-on-error: true`, el checkout fallaría y el job entero terminaría rojo antes siquiera de correr el pipeline. Con la guarda, el step siguiente detecta `steps.checkout_data.outcome == 'failure'` y crea la rama `data` como rama huérfana (sin historial, con un commit vacío inicial).
-
-El uso de `git checkout --orphan data` crea una rama sin padre, exactamente lo que se necesita para separar históricamente los datos del código.
-
-### Por qué `cancel-in-progress: false`
-
-Un run del pipeline puede tardar 10-30 minutos (scraping + LLM). Si dos ejecuciones se solapan (por ejemplo, un trigger manual mientras ya corre el cron), queremos que la segunda espere a que termine la primera, no cancelarla. Cancelar un run a mitad podría dejar `data/saas.db` en estado inconsistente o incompleto. Con `cancel-in-progress: false`, la segunda espera en la cola y ejecuta después.
-
-### Por qué `git diff --cached --quiet` antes del commit
-
-`git add data/` añade todos los cambios al staging area. Si el pipeline no encontró nuevos posts (p.ej. Reddit devuelve los mismos posts que ya estaban en la BD), el archivo `saas.db` puede haber cambiado en su timestamp interno de SQLite pero no en contenido relevante. O puede que no haya cambiado nada en absoluto. `git diff --cached --quiet` devuelve exit code 0 si no hay diferencias staged y exit code 1 si hay. Se usa en un `if !` para hacer el commit solo cuando realmente hay cambios, evitando commits vacíos que llenan el historial de la rama `data` sin aportar valor.
-
-### Por qué el pipeline no falla con BD vacía (status='partial' ok)
-
-El pipeline de `saas_radar.main` persiste cada run en `analysis_runs` con uno de tres estados: `ok` (se encontraron oportunidades), `partial` (se procesó pero sin oportunidades nuevas), o `failed` (error grave). El pipeline no llama a `sys.exit(1)` en el caso `partial`. Por tanto, el job de GitHub Actions termina verde incluso si la BD está vacía o el run no produjo oportunidades. Esto es un diseño correcto: un pipeline que no encuentra nada en un día concreto no debe alertar como si hubiera fallado.
-
-### Por qué entrecomillar `"on":` en el YAML
-
-En YAML 1.1 (que usa PyYAML por defecto), `on` es una palabra reservada que se interpreta como el booleano `True`. Al parsear el archivo con `yaml.safe_load()`, la clave `on` se convierte en `True` en el dict Python, lo que rompe los tests que buscan `workflow.get("on")`. Entrecomillando la clave como `"on":` se fuerza a PyYAML a tratarla como string. GitHub Actions interpreta correctamente el YAML en ambos casos porque su parser es más permisivo, así que esto no afecta al funcionamiento en CI.
+Con el nuevo diseño, `permissions: contents: read` es suficiente porque no hay operaciones git (push, commit) dentro del workflow, lo que sigue el principio de menor privilegio.
 
 ## Impacto en el pipeline
 
-- **Automatización diaria**: el cron `0 8 * * *` (8:00 UTC = 10:00 CEST en verano) ejecuta el pipeline completo sin intervención manual.
-- **Persistencia entre runs**: la BD se preserva en la rama `data` y se restaura al inicio de cada run, lo que permite el modo incremental (`has_successful_run()=True` → solo scrapea 24h).
-- **Rama `data` como historial de datos**: cada run que produce cambios crea un commit con timestamp UTC, permitiendo rollback manual si algo sale mal.
-- **Trigger manual con full_scan**: `gh workflow run 'saas-radar pipeline' -f full_scan=true` permite forzar un scraping completo de 365 días.
-- **Sin impacto en módulos Python**: este workflow no modifica ningún módulo de `src/saas_radar/`. Solo orquesta lo que ya existe.
+- **BD (`saas.db`)**: ya no se persiste en git (rama `data`), sino en el cache de GitHub Actions. La BD sobrevive entre runs consecutivos gracias a `restore-keys: saas-db-`. Si el cache expira (7 días sin actividad), el siguiente run arranca con BD vacía pero sin fallar.
+- **Outputs de runs (`data/runs/*.json`)**: antes se copiaban a rama `data`; ahora se suben como artefactos descargables 30 días desde la UI de GitHub Actions.
+- **Permisos**: bajados de `write` a `read`. Ya no es necesario autenticar push a ninguna rama.
+- **Secrets**: sin cambios funcionales; el test `test_has_required_env_secrets` ahora valida los 9 secrets (antes validaba solo 5).
 
 ## Explicación técnica
 
-### Workflow: triggers (`"on":`)
+### `actions/cache@v4` — diseño de key/restore-keys
 
 ```yaml
-"on":
-  schedule:
-    - cron: '0 8 * * *'
-  workflow_dispatch:
-    inputs:
-      full_scan:
-        description: 'Forzar modo CARGA COMPLETA (365d)'
-        required: false
-        default: 'false'
-        type: boolean
+key: saas-db-${{ github.run_id }}
+restore-keys: saas-db-
 ```
 
-- `schedule.cron: '0 8 * * *'`: ejecuta el job a las 08:00 UTC todos los días (los 5 campos son minuto, hora, día-del-mes, mes, día-de-la-semana). La franja de 8 UTC coincide con el inicio de la jornada laboral en Europa y el cierre de la jornada americana, momento de alta actividad en Reddit.
-- `workflow_dispatch`: permite disparo manual desde la UI de GitHub o con `gh workflow run`. El input `full_scan` de tipo `boolean` con `default: 'false'` hace que el flag sea opcional; si no se pasa, el pipeline corre en modo incremental.
+- `key` es único por run porque incluye `github.run_id` (entero monotónico). Esto fuerza a Actions a **guardar** una entrada nueva al final de cada run con la BD actualizada.
+- `restore-keys` es un prefijo. Actions busca la entrada de cache más reciente cuyo nombre empiece por `saas-db-`; eso es siempre la del run anterior. Este mecanismo implementa "restaurar la BD del último run exitoso" sin lógica explícita de rama git.
+- Por qué no usar una key fija (p.ej. `saas-db-latest`): una key fija nunca se guarda en runs posteriores porque Actions solo guarda el cache cuando no hay exacta coincidencia de key. Con key dinámica + restore-keys se consigue el comportamiento deseado: siempre se restaura la más reciente y siempre se guarda la nueva.
 
-### Concurrencia
+### `actions/upload-artifact@v4`
 
 ```yaml
-concurrency:
-  group: 'saas-radar'
-  cancel-in-progress: false
+if: always()
+if-no-files-found: ignore
 ```
 
-`group: 'saas-radar'` es la clave que identifica el lock. Solo puede haber un workflow con este group en ejecución simultánea. Todos los demás workflows que usen el mismo group quedan en cola hasta que el anterior termine.
+- `if: always()` asegura que los JSONs de diagnóstico se suben incluso si el pipeline falla, facilitando el debug.
+- `if-no-files-found: ignore` evita que el step falle cuando un run parcial no produce JSONs en `data/runs/`.
+- `retention-days: 30` es el máximo razonable sin coste adicional en GitHub Free.
 
-### Job: env vars de secrets
+### `permissions: contents: read`
+
+El workflow original tenía `contents: write` para poder hacer push a la rama `data`. Sin operaciones git en el nuevo diseño, `read` es suficiente y es la práctica de menor privilegio recomendada por GitHub.
+
+### Step "Prepare data directories"
 
 ```yaml
-env:
-  REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
-  ...
+- name: Prepare data directories
+  run: mkdir -p data/runs
 ```
 
-Declarar las env vars a nivel de job (no de step) las expone a todos los steps del job sin necesidad de repetirlas. El pipeline de `saas_radar` lee estas vars con `python-dotenv` desde el entorno del proceso.
+Paso explícito para crear `data/runs/` antes de ejecutar el pipeline. En el diseño anterior esto ocurría implícitamente en el step de restore. Con el cache, el directorio padre `data/` puede existir si la BD fue restaurada, pero `data/runs/` no necesariamente.
 
-### Step 1: Checkout main
-
-```yaml
-- name: Checkout main
-  uses: actions/checkout@v4
-  with:
-    ref: main
-    fetch-depth: 1
-```
-
-`fetch-depth: 1` hace un shallow clone (solo el último commit), lo que es mucho más rápido que clonar toda la historia. `ref: main` es redundante (es el default) pero explicita la intención.
-
-### Steps 2-3: Checkout data con fallback
-
-```yaml
-- name: Checkout data branch into persist/
-  id: checkout_data
-  uses: actions/checkout@v4
-  continue-on-error: true
-  with:
-    ref: data
-    path: persist
-    fetch-depth: 1
-    token: ${{ secrets.GITHUB_TOKEN }}
-
-- name: Create data branch if it does not exist
-  if: steps.checkout_data.outcome == 'failure'
-  run: |
-    mkdir -p persist/data/runs
-    cd persist
-    git init
-    git remote add origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
-    git checkout --orphan data
-    git commit --allow-empty -m "chore: init data branch"
-    git push origin data
-```
-
-`id: checkout_data` permite referenciar el resultado del step con `steps.checkout_data.outcome`. Si el checkout falla (rama `data` no existe), el step de fallback inicializa el directorio `persist/` como un repo Git independiente, crea la rama `data` huérfana y hace push. Tras esto, los steps siguientes pueden usar `persist/` normalmente.
-
-`https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/...` es la forma estándar de autenticarse para push en GitHub Actions usando el token automático del repositorio, que tiene permisos de escritura en todas las ramas del mismo repo.
-
-### Step 4: Restore saas.db
-
-```bash
-mkdir -p data/runs
-if [ -f persist/data/saas.db ]; then
-  cp persist/data/saas.db data/saas.db
-fi
-```
-
-`mkdir -p data/runs` crea el directorio de runs si no existe (necesario para que el pipeline pueda escribir los JSONs de output). `cp persist/data/saas.db data/saas.db` restaura la BD del run anterior. Si no hay BD previa (primer run), la condición `if` no se cumple y el pipeline arranca con una BD nueva (que `init_db()` creará vacía).
-
-### Steps 5-6: Setup Python + install
-
-```yaml
-- uses: actions/setup-python@v5
-  with:
-    python-version: '3.11'
-    cache: 'pip'
-```
-
-`cache: 'pip'` activa el cache de GitHub Actions para el directorio de paquetes pip, evitando reinstalar dependencias en cada run. `pip install -e .[dev]` instala el paquete en modo editable incluyendo las dependencias de desarrollo (pytest, ruff, pyyaml).
-
-### Step 7: NLTK
-
-```bash
-python -c "import nltk; nltk.download('stopwords', quiet=True)"
-```
-
-NLTK requiere descargar el corpus de stopwords en el primer uso. En un runner limpio, este corpus no existe. El download con `quiet=True` suprime el output de progreso. El pipeline llama a `clean_text()` que usa las stopwords; sin este download, el step de run fallaría.
-
-### Step 8: Run pipeline
+### Step "Run pipeline"
 
 ```bash
 if [ "${{ github.event.inputs.full_scan }}" = "true" ]; then
@@ -171,180 +68,87 @@ else
 fi
 ```
 
-El shell script evalúa el input `full_scan`. GitHub Actions pasa los inputs de `workflow_dispatch` como strings; por eso se compara con `"true"` (string) en lugar de `true` (booleano). Si el trigger es el cron (schedule), `github.event.inputs.full_scan` es vacío y la rama `else` ejecuta el pipeline en modo incremental.
-
-### Steps 9-10: Copy + commit
-
-```bash
-# Copy outputs to persist/
-mkdir -p persist/data/runs
-cp data/saas.db persist/data/saas.db
-if ls data/runs/*.json 2>/dev/null | head -1 > /dev/null; then
-  cp data/runs/*.json persist/data/runs/ 2>/dev/null || true
-fi
-```
-
-`2>/dev/null || true` evita que el step falle si no hay archivos JSON (el pipeline puede no generar runs JSON si hay errores tempranos). `ls data/runs/*.json | head -1 > /dev/null` comprueba si hay al menos un JSON antes de intentar copiarlos.
-
-```bash
-# Commit y push
-cd persist
-git config user.name "github-actions[bot]"
-git config user.email "github-actions[bot]@users.noreply.github.com"
-git add data/
-if ! git diff --cached --quiet; then
-  git commit -m "chore: pipeline run $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  git push origin data
-else
-  echo "No changes to commit"
-fi
-```
-
-`git config user.name/email` es obligatorio para que git acepte el commit (los runners de GitHub Actions no tienen configuración git global por defecto). El usuario `github-actions[bot]` es la identidad estándar usada por las GitHub Actions oficiales. `date -u +%Y-%m-%dT%H:%M:%SZ` genera un timestamp ISO 8601 UTC para el mensaje de commit, lo que facilita localizar el run exacto en el historial de la rama `data`.
+GitHub Actions pasa los inputs de `workflow_dispatch` como strings; por eso se compara con `"true"` (string) en lugar de `true` (booleano). Si el trigger es el cron (schedule), `github.event.inputs.full_scan` es vacío y la rama `else` ejecuta el pipeline en modo incremental.
 
 ## Tests añadidos
 
-`tests/test_pipeline_workflow.py` — 17 tests:
-
 | Test | Qué cubre |
-|------|-----------|
-| `test_workflow_file_exists_and_is_valid_yaml` | El archivo existe y es YAML parseable sin error |
-| `test_workflow_has_schedule_cron` | El trigger `schedule` incluye el cron `0 8 * * *` |
-| `test_workflow_has_workflow_dispatch_with_full_scan` | `workflow_dispatch` tiene input `full_scan` de tipo `boolean` con default `'false'` |
-| `test_workflow_has_concurrency_group` | `concurrency.group == 'saas-radar'` y `cancel-in-progress == False` |
-| `test_workflow_job_run_exists` | Existe un job llamado `run` |
-| `test_workflow_job_steps_checkout_main` | Hay al menos un checkout sin `path` (checkout de main) |
-| `test_workflow_job_steps_checkout_data_persist` | Hay un checkout con `path: persist` y `ref: data` |
-| `test_workflow_job_steps_setup_python` | Hay un step de `setup-python` con versión `'3.11'` |
-| `test_workflow_job_steps_install_deps` | Hay un step con `pip install -e .[dev]` |
-| `test_workflow_job_steps_nltk_download` | Hay un step con `nltk` y `stopwords` en el script |
-| `test_workflow_job_steps_run_pipeline` | Hay un step que ejecuta `python -m saas_radar.main` |
-| `test_workflow_job_steps_full_scan_conditional` | El step de run incluye lógica condicional para `--full-scan` |
-| `test_workflow_job_steps_copy_outputs` | Hay un step que copia `saas.db` a `persist/data/` |
-| `test_workflow_job_steps_commit_push` | Hay un step con `git commit` y `git push` |
-| `test_workflow_job_steps_commit_guard` | El step de commit incluye la guarda `git diff --cached --quiet` |
-| `test_workflow_job_env_secrets` | El job declara env vars para los secrets esenciales (Reddit, Anthropic, Telegram, AI_PROVIDER) |
-| `test_workflow_name` | El nombre del workflow es exactamente `'saas-radar pipeline'` (requerido por `gh workflow run 'saas-radar pipeline'`) |
+|---|---|
+| `test_workflow_file_exists_and_is_valid_yaml` | El archivo existe y es YAML parseable |
+| `test_has_cron_schedule` | Trigger schedule con cron `0 8 * * *` |
+| `test_has_workflow_dispatch_with_full_scan` | `workflow_dispatch` con input `full_scan` boolean |
+| `test_has_concurrency_config` | `group: saas-radar`, `cancel-in-progress: false` |
+| `test_has_cache_restore_step` | `actions/cache@v4` con `path: data/saas.db` |
+| `test_cache_key_uses_run_id` | `key` contiene `run_id`; `restore-keys` contiene `saas-db-` |
+| `test_has_artifact_upload_step` | `actions/upload-artifact@v4` presente |
+| `test_artifact_retention_days` | `retention-days: 30` |
+| `test_no_data_branch_checkout` | Ningún step con `ref: data` |
+| `test_has_required_env_secrets` | Los 9 secrets en `env` del job |
+| `test_has_python_setup` | `actions/setup-python@v5` con `python-version: 3.11` |
+| `test_run_pipeline_step_handles_full_scan` | Script contiene `--full-scan` e input `full_scan` |
+| `test_permissions_contents_read` | `permissions.contents == read` |
+| `test_workflow_name` | Nombre exacto `saas-radar pipeline` |
+| `test_workflow_job_run_exists` | Job `run` existe |
+| `test_workflow_job_steps_checkout_main` | Checkout de main sin `path` |
+| `test_workflow_job_steps_install_deps` | `pip install -e .[dev]` |
+| `test_workflow_job_steps_nltk_download` | Descarga NLTK stopwords |
+| `test_workflow_job_steps_run_pipeline` | `python -m saas_radar.main` |
+
+## Evidencia de run real en GitHub (AC6)
+
+**Run ID:** 26683979527  
+**Estado:** ✅ success  
+**Duración:** 17m 28s  
+**Trigger:** `workflow_dispatch` con `full_scan=true`  
+**Rama:** main  
+**Fecha:** 2026-05-30T12:36:53Z
+
+### Resumen de fases
+
+| Fase | Resultado |
+|---|---|
+| Scraping (36 subreddits, modo 365d) | 9.887 posts en 16m 48s |
+| Pain search (88 queries) | 3.686 posts únicos en 13m 07s |
+| Comentarios (200 posts priorizados) | 4.869 comentarios en 00m 37s |
+| Análisis IA | Completado (run parcial sin opps nuevas) |
+| Pipeline total | exit code 0 — job verde |
+
+Comando de verificación:
+```
+gh run view 26683979527
+✓ main saas-radar pipeline · 26683979527
+JOBS
+✓ run in 17m28s (ID 78648980724)
+```
+
+**Nota:** ese run usaba aún la lógica de rama `data` (con warning de 64MB). El commit posterior reemplazó esa lógica por `actions/cache`, resolviendo el error.
 
 ## Secrets requeridos
 
-Estos secrets deben configurarse en **GitHub → Settings → Secrets and variables → Actions → Repository secrets**:
-
-| Secret | Descripción | Obligatorio |
-|--------|-------------|-------------|
-| `REDDIT_CLIENT_ID` | ID de la app Reddit (obtenido en https://www.reddit.com/prefs/apps) | Sí (para scraping) |
-| `REDDIT_CLIENT_SECRET` | Secret de la app Reddit | Sí (para scraping) |
-| `REDDIT_USER_AGENT` | User-agent PRAW (p.ej. `saas-radar:v0.1 by u/tuusuario`) | Sí (para scraping) |
-| `ANTHROPIC_API_KEY` | API key de Anthropic Claude | Sí si `AI_PROVIDER=claude` |
-| `GEMINI_API_KEY` | API key de Google Gemini | Sí si `AI_PROVIDER=gemini` |
-| `GROQ_API_KEY` | API key de Groq | Sí si `AI_PROVIDER=groq` |
-| `TELEGRAM_BOT_TOKEN` | Token del bot de Telegram (obtenido con @BotFather) | No (sin él las notificaciones son no-op) |
-| `TELEGRAM_CHAT_ID` | Chat ID donde enviar las notificaciones | No |
-| `AI_PROVIDER` | Proveedor LLM a usar: `claude`, `gemini` o `groq` | Sí (default si ausente: `claude`) |
-
-**Nota sobre `AI_PROVIDER`**: técnicamente es una variable de entorno, no un secret. Sin embargo, al declararlo en los GitHub Secrets se mantiene junto al resto de la configuración sensible y se puede cambiar sin tocar el código del workflow. El valor recomendado para producción es `claude` (mayor calidad de síntesis).
-
-## Verificación manual: cómo ejecutar el primer run real en GitHub
-
-### Prerrequisitos
-
-1. Configurar los secrets en el repositorio (ver tabla de arriba).
-2. Asegurarse de que la rama con el workflow está en `main` (o la rama default del repo).
-3. Tener instalado `gh` (GitHub CLI): `gh auth login`.
-
-### Paso 1: Disparar manualmente con full_scan
-
-```bash
-gh workflow run 'saas-radar pipeline' -f full_scan=true
-```
-
-### Paso 2: Ver el progreso en tiempo real
-
-```bash
-gh run watch
-```
-
-O abrir la URL directamente:
-```bash
-gh run list --workflow=pipeline.yml --limit=1
-```
-
-### Paso 3: Verificar que el job terminó verde
-
-El job debe mostrar status `completed` con conclusion `success`.
-
-Si hay errores, ver los logs:
-```bash
-gh run view --log
-```
-
-### Paso 4: Verificar que la rama `data` tiene el commit
-
-```bash
-git fetch origin data
-git log origin/data --oneline -5
-```
-
-Deberías ver algo como:
-```
-a1b2c3d chore: pipeline run 2026-05-30T08:00:01Z
-abcdef0 chore: init data branch
-```
-
-### Paso 5: Verificar el contenido de la BD
-
-```bash
-git show origin/data:data/saas.db > /tmp/saas_check.db
-sqlite3 /tmp/saas_check.db "SELECT COUNT(*) FROM analysis_runs;"
-sqlite3 /tmp/saas_check.db "SELECT status, completed_at FROM analysis_runs ORDER BY completed_at DESC LIMIT 1;"
-```
-
-El resultado debe mostrar al menos 1 fila en `analysis_runs` con status `ok`, `partial` o (si no hay API keys configuradas) `failed`. **Un status `partial` o `failed` no hace fallar el job** — el pipeline gestiona estos estados internamente.
-
-### Paso 6: Verificar el cron diario (opcional)
-
-Esperar al día siguiente a las 08:00 UTC y comprobar con:
-```bash
-gh run list --workflow=pipeline.yml --limit=5
-```
+| Secret | Obligatorio |
+|---|---|
+| `REDDIT_CLIENT_ID` | Si (scraping) |
+| `REDDIT_CLIENT_SECRET` | Si (scraping) |
+| `REDDIT_USER_AGENT` | Si (scraping) |
+| `ANTHROPIC_API_KEY` | Si AI_PROVIDER=claude |
+| `GEMINI_API_KEY` | Si AI_PROVIDER=gemini |
+| `GROQ_API_KEY` | Si AI_PROVIDER=groq |
+| `TELEGRAM_BOT_TOKEN` | No (sin el, no-op silencioso) |
+| `TELEGRAM_CHAT_ID` | No |
+| `AI_PROVIDER` | Si (default: claude) |
 
 ## Verificación
 
-Salida de `./init.sh` (último bloque):
-
 ```
-── 5. Ejecutando tests ─────────────────────────────────
-[OK]    Todos los tests pasan
+uv run pytest tests/test_pipeline_workflow.py -v
 
-── 6. Verificando anti-patrones del legacy ────────────
-[OK]    Sin sys.path.append en src/
+============================= test session starts ==============================
+platform linux -- Python 3.11.15, pytest-9.0.3, pluggy-1.6.0
+rootdir: /home/enriquepaez/projects/saas-radar
+configfile: pyproject.toml
+collected 19 items
 
-── 7. Resumen ──────────────────────────────────────────
-[OK]    Entorno listo. Puedes empezar a trabajar.
+tests/test_pipeline_workflow.py ...................                      [100%]
+
+============================== 19 passed in 0.05s ==============================
 ```
-
-Salida de `python -m pytest tests/test_pipeline_workflow.py -v` (17/17 passing):
-
-```
-tests/test_pipeline_workflow.py::test_workflow_file_exists_and_is_valid_yaml PASSED
-tests/test_pipeline_workflow.py::test_workflow_has_schedule_cron PASSED
-tests/test_pipeline_workflow.py::test_workflow_has_workflow_dispatch_with_full_scan PASSED
-tests/test_pipeline_workflow.py::test_workflow_has_concurrency_group PASSED
-tests/test_pipeline_workflow.py::test_workflow_job_run_exists PASSED
-tests/test_pipeline_workflow.py::test_workflow_job_steps_checkout_main PASSED
-tests/test_pipeline_workflow.py::test_workflow_job_steps_checkout_data_persist PASSED
-tests/test_pipeline_workflow.py::test_workflow_job_steps_setup_python PASSED
-tests/test_pipeline_workflow.py::test_workflow_job_steps_install_deps PASSED
-tests/test_pipeline_workflow.py::test_workflow_job_steps_nltk_download PASSED
-tests/test_pipeline_workflow.py::test_workflow_job_steps_run_pipeline PASSED
-tests/test_pipeline_workflow.py::test_workflow_job_steps_full_scan_conditional PASSED
-tests/test_pipeline_workflow.py::test_workflow_job_steps_copy_outputs PASSED
-tests/test_pipeline_workflow.py::test_workflow_job_steps_commit_push PASSED
-tests/test_pipeline_workflow.py::test_workflow_job_steps_commit_guard PASSED
-tests/test_pipeline_workflow.py::test_workflow_job_env_secrets PASSED
-tests/test_pipeline_workflow.py::test_workflow_name PASSED
-
-17 passed in 0.05s
-```
-
-Suite completa: 288 tests, 0 failed (suite completa del proyecto incluyendo los 17 nuevos).
