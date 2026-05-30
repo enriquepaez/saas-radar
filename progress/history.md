@@ -187,6 +187,20 @@
 
 ---
 
+## 2026-05-30 — Feature #14: telegram_notifications
+
+- **Agente:** Claude Sonnet 4.6 (leader) + implementer + reviewer.
+- **Feature:** `telegram_notifications` (#14, M3_productizacion).
+- **Archivos creados:**
+  - `src/saas_radar/notifications/__init__.py` — paquete vacío.
+  - `src/saas_radar/notifications/telegram.py` — `_get_config()`, `send_opportunity_alert(opp)` (skip si priority_score < threshold), `send_run_summary(posts_analyzed, opportunities_count, duration_sec, mode)`, `send_text(text)` (trunca a 4000 chars), `send_tuner_report(path)` (trunca cuerpo a 3900, envuelve en ``` ), `_send_message(token, chat_id, text)` (httpx POST, parse_mode=Markdown, timeout=10). No-op silencioso sin TELEGRAM_BOT_TOKEN. CLI `__main__` con subcomandos `tuner-report` y `send --text`.
+  - `tests/test_telegram.py` — 10 tests con monkeypatch de `_send_message` y respx para verificar payload HTTP.
+- **Verificación:** 10/10 tests verdes (ciclo 2 tras añadir 3 tests pedidos por reviewer: `send_opportunity_alert` no-op/skip-score y payload Markdown). Suite completa → exit 0. `./init.sh` → OK.
+- **Review:** APROBADO por reviewer subagente (ciclo 2).
+- **Cierre:** Feature #14 marcada `done`. Desbloquea: #18 (tuning_rules, junto con #13 ✓ y #16).
+
+---
+
 ## 2026-05-30 — Feature #10: synthesis_with_validation
 
 - **Agente:** Claude Sonnet 4.6 (leader) + implementer + reviewer.

@@ -270,7 +270,7 @@
         "Tests con httpx.MockTransport: payload correcto, modo Markdown, truncado, no-op sin token"
       ],
       "depends_on": [1],
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 15,
