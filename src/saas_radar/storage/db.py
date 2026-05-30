@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from datetime import datetime
@@ -442,3 +443,126 @@ def has_successful_run(db_url: str | None = None) -> bool:
             return count > 0
     except Exception:
         return False
+
+
+# ---------------------------------------------------------------------------
+# GTM — persist_gtm, load_gtm, has_gtm
+# ---------------------------------------------------------------------------
+
+# Campos que se serializan como JSON TEXT en opportunity_gtm.
+# El resto de columnas son INTEGER o TEXT planos.
+_GTM_JSON_FIELDS = {"pricing_tiers", "acquisition_channels", "validation_plan_7d", "pivot_signals", "kpis"}
+
+# Todas las columnas de opportunity_gtm que el caller puede pasar en payload.
+# opportunity_id, id y created_at se manejan aparte; no van en este set.
+_GTM_PAYLOAD_FIELDS = [
+    "viability_desperation",
+    "viability_build_ease",
+    "viability_scalability",
+    "viability_total",
+    "elevator_pitch",
+    "pricing_tiers",
+    "acquisition_channels",
+    "cold_outreach_script",
+    "organic_post_template",
+    "validation_plan_7d",
+    "pivot_signals",
+    "kpis",
+    "gtm_status",
+    "user_notes",
+]
+
+
+def persist_gtm(opportunity_id: int, payload: dict, db_url: str | None = None) -> int:
+    """Inserta una fila en opportunity_gtm para la oportunidad dada.
+
+    Serializa automáticamente los 5 campos JSON: pricing_tiers,
+    acquisition_channels, validation_plan_7d, pivot_signals, kpis.
+    El resto de campos (TEXT o INTEGER) se insertan tal cual.
+
+    Devuelve el id asignado por AUTOINCREMENT.
+
+    Nota de idempotencia: esta función hace INSERT directo. Si la fila ya
+    existe (UNIQUE constraint en opportunity_id), la BD lanzará un error.
+    El caller debe gestionar esto con has_gtm() antes de llamar, o hacer
+    DELETE antes si usa --force.
+    """
+    url = _get_db_url(db_url)
+    engine = _make_engine(url)
+
+    # Serializar campos JSON: si el valor ya es string (p.ej. LLM devolvió
+    # string), json.dumps lo convierte a string JSON válido. Si es lista/dict,
+    # lo serializa. Si es None, lo deja como None (NULL en BD).
+    row: dict = {"opportunity_id": opportunity_id, "created_at": datetime.utcnow().isoformat()}
+    for field in _GTM_PAYLOAD_FIELDS:
+        value = payload.get(field)
+        if field in _GTM_JSON_FIELDS and value is not None:
+            # json.dumps convierte list/dict → string JSON; si ya es string,
+            # lo envuelve entre comillas (doble serialización). Para evitarlo,
+            # solo serializar si no es ya un string.
+            row[field] = value if isinstance(value, str) else json.dumps(value)
+        else:
+            row[field] = value
+
+    all_cols = list(row.keys())
+    col_str = ", ".join(all_cols)
+    ph_str = ", ".join(f":{c}" for c in all_cols)
+
+    with engine.connect() as conn:
+        with conn.begin():
+            conn.execute(text(f"INSERT INTO opportunity_gtm ({col_str}) VALUES ({ph_str})"), row)
+            gtm_id = conn.execute(text("SELECT last_insert_rowid()")).scalar()
+
+    return int(gtm_id)
+
+
+def load_gtm(opportunity_id: int, db_url: str | None = None) -> dict | None:
+    """Carga la fila opportunity_gtm para la opp dada.
+
+    Parsea los 5 campos JSON con tolerancia a corrupción: si json.loads falla,
+    deja el valor como string en lugar de propagar el error.
+
+    Devuelve None si no existe fila para opportunity_id.
+    """
+    url = _get_db_url(db_url)
+    engine = _make_engine(url)
+
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT * FROM opportunity_gtm WHERE opportunity_id = :oid"),
+            {"oid": opportunity_id},
+        ).fetchone()
+
+    if row is None:
+        return None
+
+    # fetchone() devuelve una Row de SQLAlchemy; _mapping convierte a dict-like.
+    result = dict(row._mapping)
+
+    # Parsear los campos JSON con tolerancia a corrupción.
+    for field in _GTM_JSON_FIELDS:
+        raw = result.get(field)
+        if raw is not None and isinstance(raw, str):
+            try:
+                result[field] = json.loads(raw)
+            except json.JSONDecodeError:
+                # Corrupción de datos: dejar el valor como string en lugar de
+                # propagar el error. El caller puede detectar que no es lista/dict
+                # si lo necesita.
+                logger.warning("load_gtm: json.loads falló en campo %s para opp %d", field, opportunity_id)
+
+    return result
+
+
+def has_gtm(opportunity_id: int, db_url: str | None = None) -> bool:
+    """True si existe fila en opportunity_gtm para opportunity_id."""
+    url = _get_db_url(db_url)
+    engine = _make_engine(url)
+
+    with engine.connect() as conn:
+        count = conn.execute(
+            text("SELECT COUNT(*) FROM opportunity_gtm WHERE opportunity_id = :oid"),
+            {"oid": opportunity_id},
+        ).scalar()
+
+    return count > 0

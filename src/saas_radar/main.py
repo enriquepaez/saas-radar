@@ -152,9 +152,21 @@ def phase_comments(posts_df: pd.DataFrame) -> None:
     save_to_db(comments_df, table_name="reddit_comments")
 
 
-def phase_gtm() -> None:
+def phase_gtm(min_priority: int = 7) -> None:
     print("\n-- FASE 5: GTM agent (opps canonicas pendientes)")
-    print("  GTM agent: fase pendiente (feature #17)")
+    try:
+        from saas_radar.agents.gtm_agent import run_all_pending
+
+        provider = os.getenv("AI_PROVIDER", "claude")
+        result = run_all_pending(min_priority=min_priority, provider=provider)
+        print(
+            f"  GTM: {result.get('generated', 0)} generadas, "
+            f"{result.get('skipped_low_viability', 0)} baja viabilidad, "
+            f"{result.get('failed', 0)} fallidas, "
+            f"{result.get('skipped_existing', 0)} ya existentes"
+        )
+    except Exception as e:
+        print(f"  [WARN] GTM agent falló (pipeline continúa): {e}")
 
 
 def run_pipeline(

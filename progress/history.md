@@ -237,3 +237,23 @@
 - **Verificación:** 259 tests totales → todos pasan. `ruff check` → All checks passed.
 - **Review:** APROBADO por reviewer subagente (sin cambios requeridos).
 - **Cierre:** Feature #15 marcada `done`. Desbloquea: #17 (gtm_agent_b1_b2).
+
+---
+
+## Sesión 2026-05-30 — Feature #17: gtm_agent_b1_b2
+
+- **Rama:** `feat/17-gtm_agent_b1_b2`
+- **Archivos creados:**
+  - `src/saas_radar/analysis/prompts/__init__.py` — paquete vacío.
+  - `src/saas_radar/analysis/prompts/gtm.py` — `build_gtm_prompt(opp)` con 3 tareas: viabilidad (desperation/build_ease/scalability), GTM (elevator_pitch, pricing_tiers, acquisition_channels, cold_outreach_script, organic_post_template), plan 7 días (validation_plan_7d, pivot_signals, kpis). Incluye hasta 5 evidence_quotes de la opp.
+  - `src/saas_radar/agents/__init__.py` — paquete vacío.
+  - `src/saas_radar/agents/gtm_agent.py` — `_generate_gtm` (llama LLM, valida schema, calcula viability_total), `_process_opportunity` (gate viability<20, estados: generated/skipped_low_viability/failed, idempotencia con --force), `run_all_pending` (filtra por priority_score >= min_priority). CLI con `--opp-id`, `--all-pending`, `--force`, `--min-priority`, `--provider`, `--db-url`.
+  - `tests/test_gtm_db.py` — 12 tests para persist_gtm/load_gtm/has_gtm.
+  - `tests/test_gtm_agent.py` — 21 tests para _generate_gtm, _process_opportunity, run_all_pending.
+  - `tests/test_main_gtm_phase.py` — 4 tests para phase_gtm en main.py.
+- **Archivos modificados:**
+  - `src/saas_radar/storage/db.py` — añadidas `persist_gtm`, `load_gtm`, `has_gtm` al final (serialización JSON automática de 5 campos, parseo tolerante a corrupción).
+  - `src/saas_radar/main.py` — `phase_gtm()` reemplazada por implementación real con import lazy de `run_all_pending` dentro de try/except aislado.
+- **Verificación:** 37 tests nuevos, 319 totales → todos pasan. `ruff check` → All checks passed. `./init.sh` → OK.
+- **Review:** APROBADO por reviewer subagente. Los 8 acceptance criteria verificados.
+- **Cierre:** Feature #17 marcada `done`. Desbloquea: #18 (tuning_rules_a1_a2_a3).
