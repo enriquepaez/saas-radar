@@ -1,0 +1,73 @@
+name: saas-radar tuner
+
+on:
+  workflow_run:
+    workflows: ["saas-radar pipeline"]
+    types: [completed]
+  workflow_dispatch: {}
+
+concurrency:
+  group: saas-radar-tuner
+  cancel-in-progress: false
+
+jobs:
+  tune:
+    # Solo si el pipeline que disparo termino en exito (o si es disparo manual).
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+
+      - name: Checkout data branch
+        uses: actions/checkout@v4
+        with:
+          ref: data
+          path: persist
+          fetch-depth: 1
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -e .[dev]
+
+      - name: Download NLTK stopwords
+        run: python -c "import nltk; nltk.download('stopwords', quiet=True)"
+
+      - name: Check Telegram secrets
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+            echo "::error::TELEGRAM_BOT_TOKEN o TELEGRAM_CHAT_ID no configurados en Secrets."
+            exit 1
+          fi
+
+      - name: Run tuner (dry-run)
+        run: |
+          python -m saas_radar.agents.tuner \
+            --runs-dir persist/data/runs \
+            --db-path persist/data/saas.db \
+            --lookback 10 \
+            --max-changes 5 \
+            --show-diff \
+            | tee tuner_report.txt
+
+      - name: Upload tuner report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tuner-report-${{ github.run_id }}
+          path: tuner_report.txt
+          retention-days: 30
+
+      - name: Send Telegram report
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python -m saas_radar.notifications.telegram tuner-report tuner_report.txt

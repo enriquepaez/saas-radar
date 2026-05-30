@@ -1,0 +1,9 @@
+TUNER DRY-RUN -- 2026-04-24T10:03:56Z
+runs analizados: 3 (2026-04-18T000000 .. 2026-04-20T000000)
+proposals totales: 3  |  aplicadas (cap 5): 3
+
+[remove_query      ] Zapier can't do X                        reason=0 resultados en 3 runs consecutivos.
+[demote_high_signal] nocode                                   reason=5+ runs silent consecutivos.
+[add_high_signal   ] ecommerce                                reason=10 posts acumulados, 10 con problema (100% hit), 6 payment signals en 3 runs.
+
+RESUMEN: add=1 demote=1 remove_sub=0 remove_query=1
