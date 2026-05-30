@@ -305,7 +305,7 @@
         "Verificación manual: 1 run real en GitHub con artefactos correctos (documentar en progress/)"
       ],
       "depends_on": [12],
-      "status": "pending"
+      "status": "in_progress"
     },
     {
       "id": 17,
