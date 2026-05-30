@@ -17,4 +17,4 @@ _Sin actividad._
 
 ## Próximo paso
 
-_Features disponibles: #20 (tuner_a4_pr_mode, depende de #18 ✓), #21 (llm_heuristic_tuner, depende de #13 ✓ #8 ✓ #18 ✓)._
+_Feature disponible: #21 (llm_heuristic_tuner, depende de #13 ✓ #8 ✓ #18 ✓ — todas done)._

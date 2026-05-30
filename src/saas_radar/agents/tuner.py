@@ -1,12 +1,13 @@
-"""Tuning agent — fase A2 (dry-run).
+"""Tuning agent — fase A2 (dry-run) + A4 (apply PR).
 
 Lee los ultimos N meta-JSONs de `data/runs/` y las filas de
 `meta_recommendations` en la BD, aplica las reglas deterministas de
-`tuning_rules.py` y imprime un report en consola. En A2 no modifica
-`config.py` ni abre PR.
+`tuning_rules.py` y imprime un report en consola. Con --apply edita
+`config.py`, crea una rama y abre un PR en GitHub.
 
 Uso:
-    python -m saas_radar.agents.tuner --lookback 7 --max-changes 5 --dry-run
+    python -m saas_radar.agents.tuner --lookback 7 --max-changes 5
+    python -m saas_radar.agents.tuner --lookback 7 --max-changes 5 --apply
 """
 
 from __future__ import annotations
@@ -16,11 +17,14 @@ import glob
 import json
 import logging
 import os
+import re
 import sqlite3
+import subprocess
 import sys
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 
 from saas_radar.agents.tuning_rules import Proposal, propose_all_changes
 
@@ -205,28 +209,239 @@ def render_config_diff(proposals: Iterable[Proposal]) -> str:
     return "\n".join(lines)
 
 
+# ── Edición de config.py ─────────────────────────────────────────────
+
+
+def _find_block_range(lines: list[str], var_name: str) -> tuple[int, int]:
+    """Devuelve (start_idx, end_idx) del bloque de la variable (inclusive).
+
+    Cuenta llaves/corchetes para encontrar el cierre.
+    Devuelve (-1, -1) si no encuentra la variable.
+    """
+    start = None
+    depth = 0
+    for i, line in enumerate(lines):
+        if start is None:
+            if re.match(rf"^{re.escape(var_name)}\s*[=]", line):
+                start = i
+                depth = line.count("{") + line.count("[") - line.count("}") - line.count("]")
+                if depth == 0:
+                    return (i, i)
+        else:
+            depth += line.count("{") + line.count("[") - line.count("}") - line.count("]")
+            if depth <= 0:
+                return (start, i)
+    return (-1, -1) if start is None else (start, len(lines) - 1)
+
+
+def _insert_into_set(text: str, var_name: str, entry: str) -> str:
+    """Inserta '    "<entry>",' antes del cierre } de la variable set.
+
+    Detecta la indentacion del ultimo elemento y la replica.
+    Si ya existe la entrada (case-insensitive), no la duplica.
+    """
+    lines = text.split("\n")
+    start, end = _find_block_range(lines, var_name)
+    if start == -1:
+        return text
+    # Si ya existe, no duplicar
+    pattern = re.compile(rf'^\s*"{re.escape(entry)}"\s*,?\s*$', re.IGNORECASE)
+    for i in range(start, end + 1):
+        if pattern.match(lines[i]):
+            return text  # ya existe
+    # Encontrar linea de cierre (la primera que empiece con } en el bloque)
+    for i in range(end, start - 1, -1):
+        if lines[i].strip() in ("}", "},", "]", "],"):
+            # Detectar indentacion del ultimo elemento real (no comentario, no vacio)
+            indent = "    "
+            for j in range(i - 1, start, -1):
+                s = lines[j].strip()
+                if s and not s.startswith("#"):
+                    indent = " " * (len(lines[j]) - len(lines[j].lstrip()))
+                    break
+            lines.insert(i, f'{indent}"{entry}",')
+            return "\n".join(lines)
+    return text
+
+
+def _remove_from_collection(text: str, var_name: str, entry: str) -> str:
+    """Elimina la linea con '    "<entry>",' dentro del bloque de var_name.
+
+    Matching case-insensitive para subreddits (que pueden tener mayusculas en config.py).
+    Solo elimina la primera ocurrencia encontrada dentro del bloque.
+    """
+    lines = text.split("\n")
+    start, end = _find_block_range(lines, var_name)
+    if start == -1:
+        return text
+    pattern = re.compile(rf'^\s*"{re.escape(entry)}"\s*,?\s*$', re.IGNORECASE)
+    for i in range(start, end + 1):
+        if pattern.match(lines[i]):
+            lines.pop(i)
+            return "\n".join(lines)
+    return text
+
+
+def apply_proposals(proposals: list[Proposal], config_path: Path) -> None:
+    """Aplica la lista de propuestas editando config.py en disco.
+
+    Usa edicion linea a linea (no regex global) para preservar formato y comentarios.
+    """
+    text = config_path.read_text(encoding="utf-8")
+    for p in proposals:
+        if p.action == "add_high_signal":
+            text = _insert_into_set(text, "HIGH_SIGNAL_SUBREDDITS", p.target)
+        elif p.action == "demote_high_signal":
+            text = _remove_from_collection(text, "HIGH_SIGNAL_SUBREDDITS", p.target)
+        elif p.action == "remove_subreddit":
+            text = _remove_from_collection(text, "SUBREDDITS", p.target)
+        elif p.action == "remove_query":
+            text = _remove_from_collection(text, "PAIN_SEARCH_QUERIES", p.target)
+        else:
+            logger.warning("Accion desconocida ignorada: %s", p.action)
+    config_path.write_text(text, encoding="utf-8")
+
+
+# ── Helpers git/gh y BD ──────────────────────────────────────────────
+
+
+def check_open_pr(branch_prefix: str) -> str | None:
+    """Devuelve la URL del PR abierto con ese prefijo de rama, o None si no hay.
+
+    Usa `gh pr list` con JSON output. Si gh no esta disponible, devuelve None con warning.
+    """
+    try:
+        result = subprocess.run(
+            ["gh", "pr", "list", "--state", "open", "--json", "headRefName,url"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            logger.warning("gh pr list fallo: %s", result.stderr[:200])
+            return None
+        prs = json.loads(result.stdout or "[]")
+        for pr in prs:
+            if pr.get("headRefName", "").startswith(branch_prefix):
+                return pr.get("url", "")
+        return None
+    except (OSError, json.JSONDecodeError, subprocess.TimeoutExpired) as exc:
+        logger.warning("check_open_pr error: %s", exc)
+        return None
+
+
+def mark_acted(db_path: str, proposals: list[Proposal], acted: int = 1) -> None:
+    """Actualiza meta_recommendations.acted para los targets de las propuestas."""
+    if not proposals or not os.path.exists(db_path):
+        return
+    conn = sqlite3.connect(db_path)
+    try:
+        for p in proposals:
+            conn.execute(
+                "UPDATE meta_recommendations SET acted = ? WHERE target = ?",
+                (acted, p.target),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def sync_acted_status(db_path: str, state_file: Path) -> None:
+    """Si el PR anterior fue cerrado sin merge, revierte acted=0 en las filas afectadas.
+
+    Lee data/tuner_state.json para conocer la URL del ultimo PR. Si el PR esta
+    CLOSED (no MERGED), resetea acted=0 en todas las filas con acted=1.
+    """
+    if not state_file.exists():
+        return
+    try:
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return
+    pr_url = state.get("pr_url", "")
+    if not pr_url:
+        return
+    try:
+        result = subprocess.run(
+            ["gh", "pr", "view", pr_url, "--json", "state"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            return
+        data = json.loads(result.stdout)
+        pr_state = data.get("state", "")
+    except (OSError, json.JSONDecodeError, subprocess.TimeoutExpired):
+        return
+    # state == "CLOSED" significa cerrado SIN merge; "MERGED" es merge exitoso
+    if pr_state == "CLOSED":
+        if os.path.exists(db_path):
+            conn = sqlite3.connect(db_path)
+            try:
+                conn.execute("UPDATE meta_recommendations SET acted = 0 WHERE acted = 1")
+                conn.commit()
+            finally:
+                conn.close()
+        logger.info("PR cerrado sin merge — acted revertido a 0.")
+
+
+def _append_readme_registry(readme_path: Path, date_str: str, proposals: list[Proposal], pr_url: str) -> None:
+    """Añade una entrada al registro de tuning en README.md.
+
+    Si la seccion '## Registro de tuning automatico' no existe, la crea al final.
+    """
+    text = readme_path.read_text(encoding="utf-8") if readme_path.exists() else ""
+    entry_lines = [
+        f"### {date_str}",
+        f"PR: {pr_url}",
+        "",
+    ]
+    for p in proposals:
+        entry_lines.append(f"- `{p.action}` → `{p.target}` — {p.reason}")
+    entry_lines.append("")
+    entry = "\n".join(entry_lines)
+
+    section_header = "## Registro de tuning automatico\n"
+    if section_header not in text:
+        text = text.rstrip("\n") + f"\n\n{section_header}\n{entry}"
+    else:
+        text = text + entry
+    readme_path.write_text(text, encoding="utf-8")
+
+
 # ── CLI ───────────────────────────────────────────────────────────────────
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="saas_radar.agents.tuner",
-        description="Agente de tuning (dry-run): propone cambios a config.py.",
+        description="Agente de tuning: propone y aplica cambios a config.py.",
     )
     parser.add_argument("--runs-dir", default="data/runs", help="Carpeta con *_meta.json")
     parser.add_argument("--db-path", default="data/saas.db", help="Path a la BD SQLite")
     parser.add_argument("--lookback", type=int, default=10, help="Ultimos N runs a analizar")
     parser.add_argument("--max-changes", type=int, default=5, help="Cap de propuestas aplicadas")
     parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        default=True,
-        help="Solo imprime report (unico modo en A2).",
-    )
-    parser.add_argument(
         "--show-diff",
         action="store_true",
         help="Ademas del report imprime el diff simulado de config.py.",
+    )
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        default=False,
+        help="Aplica los cambios en config.py, crea rama y PR en GitHub.",
+    )
+    parser.add_argument(
+        "--config-path",
+        default="src/saas_radar/config.py",
+        help="Path a config.py (para poder sobreescribirlo en tests).",
+    )
+    parser.add_argument(
+        "--readme-path",
+        default="README.md",
+        help="Path a README.md para el registro de tuning.",
     )
     return parser.parse_args(argv)
 
@@ -268,6 +483,76 @@ def main(argv: list[str] | None = None) -> int:
         print()
         print("-- config.py diff simulado --")
         print(render_config_diff(applied))
+
+    if not args.apply:
+        return 0
+
+    # ── Modo apply ────────────────────────────────────────────────────────
+
+    if not applied:
+        print("(sin propuestas — no hay nada que aplicar)")
+        return 0
+
+    # 1. Sync estado del PR anterior (revertir acted si fue cerrado sin merge)
+    state_file = Path(args.runs_dir).parent / "tuner_state.json"
+    sync_acted_status(args.db_path, state_file)
+
+    # 2. Guard de PR abierto
+    existing_pr = check_open_pr("chore/auto-tuning-")
+    if existing_pr:
+        print(f"[SKIP] PR ya abierto: {existing_pr} — sin cambios.")
+        return 0
+
+    # 3. Aplicar cambios en config.py
+    config_path = Path(args.config_path)
+    apply_proposals(applied, config_path)
+    logger.info("config.py actualizado con %d propuestas.", len(applied))
+
+    # 4. Crear rama, commit y push
+    date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
+    branch = f"chore/auto-tuning-{date_str}"
+    subprocess.run(["git", "checkout", "-b", branch], check=True)
+    subprocess.run(["git", "add", str(config_path)], check=True)
+    subprocess.run(["git", "commit", "-m", f"chore: auto-tuning {date_str}"], check=True)
+    subprocess.run(["git", "push", "-u", "origin", branch], check=True)
+
+    # 5. Guardar report en fichero y construir body del PR
+    report_text = render_report(data, runs_ts)
+    report_path = Path("tuner_report.txt")
+    report_path.write_text(report_text, encoding="utf-8")
+
+    meta_files = sorted(glob.glob(os.path.join(args.runs_dir, "*_meta.json")))
+    meta_link = meta_files[-1] if meta_files else "(no meta-JSON disponible)"
+    pr_body = f"{report_text}\n\nMeta-JSON: `{meta_link}`"
+
+    # 6. Crear PR con gh
+    result = subprocess.run(
+        [
+            "gh",
+            "pr",
+            "create",
+            "--title",
+            f"chore: auto-tuning {date_str}",
+            "--body",
+            pr_body,
+            "--base",
+            "main",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    pr_url = result.stdout.strip()
+    print(f"PR creado: {pr_url}")
+
+    # 7. Marcar acted=1 en BD
+    mark_acted(args.db_path, applied)
+
+    # 8. Guardar estado para el proximo run
+    state_file.write_text(json.dumps({"pr_url": pr_url, "date": date_str}), encoding="utf-8")
+
+    # 9. Append al README
+    _append_readme_registry(Path(args.readme_path), date_str, applied, pr_url)
 
     return 0
 
