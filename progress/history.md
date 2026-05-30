@@ -211,3 +211,17 @@
 - **Verificación:** 209 tests (15 nuevos) → todos pasan en 0.88s. `ruff check` → All checks passed. `./init.sh` → OK.
 - **Review:** APROBADO por reviewer subagente (ciclo 2 tras añadir logger y convertir 7 `print()` a `logger.debug/info`).
 - **Cierre:** Feature #10 marcada `done`. Desbloquea: #11 (ai_analyzer_orchestrator).
+
+---
+
+## Sesión 2026-05-30 — Feature #15: dedup_jaccard_v1
+
+- **Rama:** `feat/15-dedup_jaccard_v1`
+- **Archivos creados/modificados:**
+  - `src/saas_radar/analysis/dedup.py` — algoritmo Jaccard sobre evidence_quotes (funciones: `find_canonical`, `evidence_overlap`, `name_similarity`, helpers privados).
+  - `src/saas_radar/storage/db.py` — wiring de `find_canonical` en `persist_run_to_db`: carga opps existentes antes del loop, asigna canonical_id real o autoreferencia.
+  - `scripts/backfill_canonical.py` — script one-shot idempotente con `--dry-run/--yes/--force/--threshold`.
+  - `tests/test_dedup.py` — 19 tests portados del legacy.
+- **Verificación:** 259 tests totales → todos pasan. `ruff check` → All checks passed.
+- **Review:** APROBADO por reviewer subagente (sin cambios requeridos).
+- **Cierre:** Feature #15 marcada `done`. Desbloquea: #17 (gtm_agent_b1_b2).

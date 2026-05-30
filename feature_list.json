@@ -288,7 +288,7 @@
         "Documentar en progress/impl_dedup_jaccard_v1.md la limitación conocida (falsos negativos por evidencia disjunta) — reproducir el comportamiento del legacy"
       ],
       "depends_on": [11],
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 16,

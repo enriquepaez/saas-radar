@@ -17,4 +17,4 @@ _Sin actividad._
 
 ## Próximo paso
 
-_Arrancar feature #15 (dedup_jaccard_v1, depende de #11 ✓), #16 (github_actions_pipeline_workflow, depende de #12 ✓) o #19 (logging_structured_l1_l2, depende de #2 ✓)._
+_Arrancar feature #16 (github_actions_pipeline_workflow, depende de #12 ✓), #17 (gtm_agent_b1_b2, depende de #15 ✓) o #19 (logging_structured_l1_l2, depende de #2 ✓)._

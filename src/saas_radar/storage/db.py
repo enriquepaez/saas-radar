@@ -9,6 +9,8 @@ from datetime import datetime
 import pandas as pd
 from sqlalchemy import create_engine, text
 
+from saas_radar.analysis.dedup import find_canonical
+
 logger = logging.getLogger(__name__)
 
 _DEFAULT_DB_URL = "sqlite:///data/saas.db"
@@ -282,8 +284,13 @@ def persist_run_to_db(
 ) -> int:
     """Inserta un analysis_run y sus oportunidades asociadas.
 
-    Para cada oportunidad, si canonical_id no viene en el dict, se
-    hace un UPDATE autorreferencial (canonical_id = id) tras el INSERT.
+    Para cada oportunidad, llama a find_canonical contra las opps existentes
+    para detectar duplicados entre runs. Si hay match, usa ese canonical_id.
+    Si no hay match, inserta la opp y hace UPDATE autorreferencial
+    (canonical_id = id).
+
+    Las opps existentes se cargan UNA vez antes del loop (no por cada opp)
+    para minimizar queries a la BD.
 
     Devuelve el run_id asignado por AUTOINCREMENT.
     """
@@ -306,6 +313,15 @@ def persist_run_to_db(
             )
             run_id = conn.execute(text("SELECT last_insert_rowid()")).scalar()
 
+            # Cargar existing UNA vez antes del loop: solo campos necesarios
+            # para find_canonical. Cargarlas dentro del loop haría N queries.
+            existing_rows = [
+                {"id": r[0], "canonical_id": r[1], "product_name": r[2] or "", "evidence_quotes": r[3]}
+                for r in conn.execute(
+                    text("SELECT id, canonical_id, product_name, evidence_quotes FROM opportunities")
+                ).fetchall()
+            ]
+
             opp_fields = [
                 "product_name", "niche", "core_problem", "why_gap_exists",
                 "concrete_workaround", "workaround_cost", "mvp_scope",
@@ -317,8 +333,12 @@ def persist_run_to_db(
             ]
 
             for opp in opportunities:
+                canonical = find_canonical(opp, existing_rows, threshold=0.3)
+
                 opp_row = {f: opp.get(f) for f in opp_fields}
                 opp_row["run_id"] = run_id
+                if canonical is not None:
+                    opp_row["canonical_id"] = canonical
 
                 all_cols = ["run_id"] + opp_fields
                 col_str = ", ".join(all_cols)
@@ -328,12 +348,21 @@ def persist_run_to_db(
                 conn.execute(text(f"INSERT INTO opportunities ({col_str}) VALUES ({ph_str})"), params)
                 opp_id = conn.execute(text("SELECT last_insert_rowid()")).scalar()
 
-                # Si canonical_id no se proveyó, hacer autoreferencia
-                if opp.get("canonical_id") is None:
+                if canonical is None:
+                    # Nueva canónica: autoreferencia tras INSERT para que
+                    # load_active_opportunities (WHERE id = canonical_id) la encuentre.
                     conn.execute(
                         text("UPDATE opportunities SET canonical_id = :oid WHERE id = :oid"),
                         {"oid": opp_id},
                     )
+                    # Añadir al pool de existing para que las opps restantes
+                    # del mismo run también puedan matchear contra ésta.
+                    existing_rows.append({
+                        "id": opp_id,
+                        "canonical_id": opp_id,
+                        "product_name": opp.get("product_name") or "",
+                        "evidence_quotes": opp.get("evidence_quotes"),
+                    })
 
     return run_id
 
