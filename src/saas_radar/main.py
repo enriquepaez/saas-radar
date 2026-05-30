@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -207,11 +206,10 @@ def run_pipeline(
         t0 = time.time()
         run_ai_analysis(
             min_score=min_score,
-            top_n=top_posts,
-            output_path=output,
+            top_posts=top_posts,
+            output=output,
             use_cached_extractions=use_cached_extractions,
             post_age_days=post_age_days,
-            provider=os.getenv("AI_PROVIDER", "claude"),
         )
         print(f"   Análisis IA:     {_fmt(time.time() - t0)}")
     else:
