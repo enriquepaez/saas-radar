@@ -221,9 +221,9 @@ def run_ai_analysis(
             all_extractions: list[dict] = json.loads(cache_p.read_text(encoding="utf-8"))
         except Exception as exc:
             logger.warning("Cache corrupto (%s) — re-extrayendo", exc)
-            all_extractions = _extract_and_cache(posts_list, extractions_cache_path)
+            all_extractions = _extract_and_cache(posts_list, extractions_cache_path, provider=provider)
     else:
-        all_extractions = _extract_and_cache(posts_list, extractions_cache_path)
+        all_extractions = _extract_and_cache(posts_list, extractions_cache_path, provider=provider)
 
     valid_extractions = _clean_extractions(all_extractions)
     logger.info("Extracciones válidas: %d / %d", len(valid_extractions), len(all_extractions))
@@ -342,7 +342,7 @@ def run_ai_analysis(
 # ── Helpers internos ──────────────────────────────────────────────────────────
 
 
-def _extract_and_cache(posts_list: list[pd.Series], cache_path: str) -> list[dict]:
+def _extract_and_cache(posts_list: list[pd.Series], cache_path: str, provider: str = "claude") -> list[dict]:
     """Ejecuta la extracción y guarda el resultado en cache.
 
     Selecciona el modo de extracción según DEEP_EXTRACTION_THRESHOLD:
@@ -354,10 +354,10 @@ def _extract_and_cache(posts_list: list[pd.Series], cache_path: str) -> list[dic
     """
     if len(posts_list) <= DEEP_EXTRACTION_THRESHOLD:
         logger.info("Modo deep (N=%d <= %d): extracción post a post", len(posts_list), DEEP_EXTRACTION_THRESHOLD)
-        extractions = [extract_problem_deep(row) for row in posts_list]
+        extractions = [extract_problem_deep(row, provider=provider) for row in posts_list]
     else:
         logger.info("Modo batch (N=%d > %d): extracción en batches de 5", len(posts_list), DEEP_EXTRACTION_THRESHOLD)
-        extractions = run_batch_extraction(posts_list)
+        extractions = run_batch_extraction(posts_list, provider=provider)
 
     _save_extractions_cache(extractions, cache_path)
     return extractions

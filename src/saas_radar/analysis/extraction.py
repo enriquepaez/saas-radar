@@ -244,7 +244,7 @@ _NON_SAAS_PAIN_SIGNALS = [
 # ── Funciones de extracción ───────────────────────────────────────────────────
 
 
-def extract_problem_from_post(row: pd.Series, comments: list[str]) -> dict[str, Any]:
+def extract_problem_from_post(row: pd.Series, comments: list[str], provider: str = "claude") -> dict[str, Any]:
     """Extrae el problema de un post individual usando el LLM."""
     title = str(row.get("title", "")).strip()
     text = str(row.get("text", "")).strip()[:TEXT_SNIPPET_LEN]
@@ -262,7 +262,7 @@ def extract_problem_from_post(row: pd.Series, comments: list[str]) -> dict[str, 
         comments_section=comments_section,
     )
 
-    result = call_llm(prompt, max_tokens=600, phase="extraction")
+    result = call_llm(prompt, max_tokens=600, phase="extraction", provider=provider)
     if result is None:
         return {"has_problem": False, "_title": title, "_subreddit": sub}
 
@@ -289,7 +289,7 @@ def _fetch_comments_for_post(post_id: str, limit: int = 15) -> list[str]:
     return [row[0] for row in rows]
 
 
-def extract_problem_deep(row: pd.Series) -> dict[str, Any]:
+def extract_problem_deep(row: pd.Series, provider: str = "claude") -> dict[str, Any]:
     """Extracción profunda: texto completo + comentarios desde BD + prompt enriquecido."""
     title = str(row.get("title", "")).strip()
     text = str(row.get("text", "")).strip()
@@ -309,7 +309,7 @@ def extract_problem_deep(row: pd.Series) -> dict[str, Any]:
         comments_section=comments_section,
     )
 
-    result = call_llm(prompt, max_tokens=800, phase="extraction")
+    result = call_llm(prompt, max_tokens=800, phase="extraction", provider=provider)
     if result is None:
         return {"has_problem": False, "_title": title, "_subreddit": sub, "_error": True}
 
@@ -323,7 +323,7 @@ def extract_problem_deep(row: pd.Series) -> dict[str, Any]:
     return result
 
 
-def extract_problems_batch(rows: list[pd.Series]) -> list[dict[str, Any]]:
+def extract_problems_batch(rows: list[pd.Series], provider: str = "claude") -> list[dict[str, Any]]:
     """Extrae problemas de N posts en una sola llamada al LLM."""
     posts_block_parts = []
     for i, row in enumerate(rows, 1):
@@ -338,7 +338,7 @@ def extract_problems_batch(rows: list[pd.Series]) -> list[dict[str, Any]]:
     posts_block = "\n\n".join(posts_block_parts)
     prompt = EXTRACTION_BATCH_PROMPT.format(posts_block=posts_block, n=len(rows))
 
-    result = call_llm(prompt, max_tokens=220 * len(rows), phase="extraction")
+    result = call_llm(prompt, max_tokens=220 * len(rows), phase="extraction", provider=provider)
     if not result or "results" not in result:
         reason = "respuesta None (API fallo)" if result is None else f"sin clave 'results': {str(result)[:200]}"
         logger.warning("Batch fallo -- %s", reason)
@@ -376,14 +376,14 @@ def extract_problems_batch(rows: list[pd.Series]) -> list[dict[str, Any]]:
 # ── Circuit breaker ───────────────────────────────────────────────────────────
 
 
-def run_batch_extraction(posts: list[pd.Series], batch_size: int = EXTRACTION_BATCH_SIZE) -> list[dict[str, Any]]:
+def run_batch_extraction(posts: list[pd.Series], batch_size: int = EXTRACTION_BATCH_SIZE, provider: str = "claude") -> list[dict[str, Any]]:
     """Procesa posts en batches con circuit breaker tras errores consecutivos."""
     results: list[dict[str, Any]] = []
     consecutive_errors = 0
 
     for start in range(0, len(posts), batch_size):
         batch = posts[start : start + batch_size]
-        batch_results = extract_problems_batch(batch)
+        batch_results = extract_problems_batch(batch, provider=provider)
         results.extend(batch_results)
 
         if all(item.get("_error") for item in batch_results):
@@ -401,11 +401,11 @@ def run_batch_extraction(posts: list[pd.Series], batch_size: int = EXTRACTION_BA
     return results
 
 
-def extract_problems(posts: list[pd.Series]) -> list[dict[str, Any]]:
+def extract_problems(posts: list[pd.Series], provider: str = "claude") -> list[dict[str, Any]]:
     """Entrada pública: bifurca entre extracción deep y batch según DEEP_EXTRACTION_THRESHOLD."""
     if len(posts) <= DEEP_EXTRACTION_THRESHOLD:
-        return [extract_problem_deep(row) for row in posts]
-    return run_batch_extraction(posts)
+        return [extract_problem_deep(row, provider=provider) for row in posts]
+    return run_batch_extraction(posts, provider=provider)
 
 
 # ── Funciones puras de limpieza ───────────────────────────────────────────────

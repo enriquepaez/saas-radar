@@ -368,3 +368,78 @@ def test_extract_problems_uses_batch_when_many_posts():
 
     mock_batch.assert_called_once()
     mock_deep.assert_not_called()
+
+
+# ── Propagación de provider ───────────────────────────────────────────────────
+
+
+def test_extract_problem_from_post_passes_provider():
+    """call_llm recibe el provider no-default cuando se especifica en extract_problem_from_post."""
+    llm_response = {
+        "has_problem": True,
+        "who_has_it": "developer",
+        "problem_description": "some pain",
+        "workflow_context": "daily work",
+        "current_workaround": "none",
+        "payment_signal": False,
+        "payment_quote": "",
+        "competitor_mentions": [],
+        "key_quote": "it hurts",
+    }
+    row = _make_row()
+    with patch("saas_radar.analysis.extraction.call_llm", return_value=llm_response) as mock_llm:
+        extract_problem_from_post(row, [], provider="gemini")
+
+    _, kwargs = mock_llm.call_args
+    assert kwargs.get("provider") == "gemini"
+
+
+def test_extract_problem_deep_passes_provider():
+    """call_llm recibe el provider no-default cuando se especifica en extract_problem_deep."""
+    llm_response = {
+        "has_problem": True,
+        "who_has_it": "solo bookkeeper",
+        "problem_description": "painful reconciliation",
+        "workflow_context": "monthly close",
+        "current_workaround": "Excel",
+        "payment_signal": False,
+        "payment_quote": "",
+        "competitor_mentions": [],
+        "key_quote": "takes hours",
+        "comment_signals": "",
+        "estimated_frequency": "monthly",
+        "tam_clues": "",
+    }
+    row = _make_row(id="deep_provider")
+    with patch("saas_radar.analysis.extraction._fetch_comments_for_post", return_value=[]):
+        with patch("saas_radar.analysis.extraction.call_llm", return_value=llm_response) as mock_llm:
+            extract_problem_deep(row, provider="gemini")
+
+    _, kwargs = mock_llm.call_args
+    assert kwargs.get("provider") == "gemini"
+
+
+def test_extract_problems_batch_passes_provider():
+    """call_llm recibe el provider no-default cuando se especifica en extract_problems_batch."""
+    llm_response = {
+        "results": [
+            {
+                "post_index": 1,
+                "has_problem": True,
+                "who_has_it": "freelancer",
+                "problem_description": "invoicing pain",
+                "workflow_context": "invoicing",
+                "current_workaround": "spreadsheets",
+                "payment_signal": False,
+                "payment_quote": "",
+                "competitor_mentions": [],
+                "key_quote": "takes forever",
+            }
+        ]
+    }
+    rows = [_make_row()]
+    with patch("saas_radar.analysis.extraction.call_llm", return_value=llm_response) as mock_llm:
+        extract_problems_batch(rows, provider="gemini")
+
+    _, kwargs = mock_llm.call_args
+    assert kwargs.get("provider") == "gemini"
