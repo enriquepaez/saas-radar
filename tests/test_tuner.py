@@ -1,7 +1,8 @@
-"""Tests del tuning agent (fase A2).
+"""Tests del tuning agent (fase A2 + A4).
 
-Cubre loaders, priorizacion + cap, renderizado del report, diff simulado y
-wiring end-to-end del CLI. Sin red, sin LLM. Usa BD temporal SQLite en disco
+Cubre loaders, priorizacion + cap, renderizado del report, diff simulado,
+wiring end-to-end del CLI (dry-run) y el modo --apply con subprocess mockeado.
+Sin red, sin LLM. Usa BD temporal SQLite en disco
 (la mayoria de drivers falla con `:memory:` cuando reabrimos con otro
 conexion).
 """
@@ -379,3 +380,340 @@ def test_render_report_snapshot(tmp_path):
         pytest.skip("Fixture generada por primera vez — ejecuta de nuevo para validar.")
     expected = fixture.read_text(encoding="utf-8")
     assert out == expected
+
+
+# ── TestApplyProposals ───────────────────────────────────────────────────
+
+
+class TestApplyProposals:
+    """Verifica que apply_proposals edita config.py correctamente."""
+
+    def _make_config(self, tmp_path: Path) -> Path:
+        """Crea un config.py minimo con las 3 listas mutables."""
+        config_py = tmp_path / "config.py"
+        config_py.write_text(
+            'HIGH_SIGNAL_SUBREDDITS = {\n'
+            '    # comment line\n'
+            '    "msp",\n'
+            '    "sysadmin",\n'
+            '}\n'
+            '\n'
+            'SUBREDDITS = [\n'
+            '    "zapier",\n'
+            '    "PropertyManagement",\n'
+            '    "accounting",\n'
+            ']\n'
+            '\n'
+            'PAIN_SEARCH_QUERIES = [\n'
+            '    "Zapier can\'t",\n'
+            '    "I use Excel to track",\n'
+            ']\n',
+            encoding="utf-8",
+        )
+        return config_py
+
+    def test_add_high_signal_inserts_entry(self, tmp_path):
+        from saas_radar.agents.tuner import apply_proposals
+
+        config = self._make_config(tmp_path)
+        apply_proposals([Proposal("add_high_signal", "devops", "hit alto")], config)
+        text = config.read_text(encoding="utf-8")
+        assert '"devops",' in text
+        # Debe estar dentro del bloque HIGH_SIGNAL_SUBREDDITS (antes de SUBREDDITS =)
+        hss_block = text.split("\nSUBREDDITS = ")[0]
+        assert '"devops",' in hss_block
+
+    def test_add_high_signal_no_duplica(self, tmp_path):
+        from saas_radar.agents.tuner import apply_proposals
+
+        config = self._make_config(tmp_path)
+        apply_proposals([Proposal("add_high_signal", "msp", "ya existe")], config)
+        assert config.read_text(encoding="utf-8").count('"msp"') == 1
+
+    def test_demote_high_signal_elimina_entrada(self, tmp_path):
+        from saas_radar.agents.tuner import apply_proposals
+
+        config = self._make_config(tmp_path)
+        apply_proposals([Proposal("demote_high_signal", "sysadmin", "silent")], config)
+        # La entrada debe haber desaparecido del bloque HIGH_SIGNAL
+        hss_block = config.read_text(encoding="utf-8").split("\nSUBREDDITS = ")[0]
+        assert '"sysadmin"' not in hss_block
+
+    def test_remove_subreddit_elimina_entrada_case_insensitive(self, tmp_path):
+        from saas_radar.agents.tuner import apply_proposals
+
+        config = self._make_config(tmp_path)
+        # El target viene en minusculas del tuner; config.py tiene "PropertyManagement"
+        apply_proposals([Proposal("remove_subreddit", "propertymanagement", "0% hit")], config)
+        text = config.read_text(encoding="utf-8")
+        assert '"PropertyManagement"' not in text
+
+    def test_remove_query_elimina_entrada(self, tmp_path):
+        from saas_radar.agents.tuner import apply_proposals
+
+        config = self._make_config(tmp_path)
+        apply_proposals([Proposal("remove_query", "Zapier can't", "vacia")], config)
+        text = config.read_text(encoding="utf-8")
+        assert "\"Zapier can't\"" not in text
+
+    def test_preserva_comentarios_y_formato(self, tmp_path):
+        from saas_radar.agents.tuner import apply_proposals
+
+        config = self._make_config(tmp_path)
+        apply_proposals([Proposal("add_high_signal", "newone", "test")], config)
+        text = config.read_text(encoding="utf-8")
+        assert "# comment line" in text  # comentario preservado
+
+    def test_accion_desconocida_no_modifica(self, tmp_path):
+        from saas_radar.agents.tuner import apply_proposals
+
+        config = self._make_config(tmp_path)
+        original = config.read_text(encoding="utf-8")
+        apply_proposals([Proposal("unknown_action", "foo", "test")], config)
+        assert config.read_text(encoding="utf-8") == original
+
+
+# ── TestCheckOpenPr ──────────────────────────────────────────────────────
+
+
+class TestCheckOpenPr:
+    def test_devuelve_url_cuando_pr_existe(self, monkeypatch):
+        import subprocess as sp_module
+
+        from saas_radar.agents.tuner import check_open_pr
+
+        def fake_run(cmd, **kwargs):
+            return sp_module.CompletedProcess(
+                cmd,
+                0,
+                stdout=json.dumps(
+                    [{"headRefName": "chore/auto-tuning-20260530", "url": "https://github.com/x/y/pull/42"}]
+                ),
+                stderr="",
+            )
+
+        monkeypatch.setattr("saas_radar.agents.tuner.subprocess.run", fake_run)
+        url = check_open_pr("chore/auto-tuning-")
+        assert url == "https://github.com/x/y/pull/42"
+
+    def test_devuelve_none_cuando_no_hay_pr(self, monkeypatch):
+        import subprocess as sp_module
+
+        from saas_radar.agents.tuner import check_open_pr
+
+        def fake_run(cmd, **kwargs):
+            return sp_module.CompletedProcess(cmd, 0, stdout="[]", stderr="")
+
+        monkeypatch.setattr("saas_radar.agents.tuner.subprocess.run", fake_run)
+        assert check_open_pr("chore/auto-tuning-") is None
+
+    def test_devuelve_none_si_gh_falla(self, monkeypatch):
+        import subprocess as sp_module
+
+        from saas_radar.agents.tuner import check_open_pr
+
+        def fake_run(cmd, **kwargs):
+            return sp_module.CompletedProcess(cmd, 1, stdout="", stderr="error")
+
+        monkeypatch.setattr("saas_radar.agents.tuner.subprocess.run", fake_run)
+        assert check_open_pr("chore/auto-tuning-") is None
+
+
+# ── TestMarkActed y TestSyncActedStatus ──────────────────────────────────
+
+
+class TestMarkActed:
+    def test_sets_acted_1_en_bd(self, tmp_path):
+        from saas_radar.agents.tuner import mark_acted
+
+        db = tmp_path / "test.db"
+        _make_meta_recs_db(db, [{"type": "remove_subreddit", "target": "startups", "recurrence": 3, "acted": 0}])
+        mark_acted(str(db), [Proposal("remove_subreddit", "startups", "r")])
+        conn = sqlite3.connect(str(db))
+        row = conn.execute("SELECT acted FROM meta_recommendations WHERE target = 'startups'").fetchone()
+        conn.close()
+        assert row[0] == 1
+
+    def test_noop_si_db_no_existe(self, tmp_path):
+        from saas_radar.agents.tuner import mark_acted
+
+        # No debe lanzar excepcion
+        mark_acted(str(tmp_path / "nope.db"), [Proposal("remove_subreddit", "x", "r")])
+
+
+class TestSyncActedStatus:
+    def test_resetea_acted_cuando_pr_cerrado_sin_merge(self, tmp_path, monkeypatch):
+        import subprocess as sp_module
+
+        from saas_radar.agents.tuner import sync_acted_status
+
+        state_file = tmp_path / "tuner_state.json"
+        state_file.write_text(
+            json.dumps({"pr_url": "https://github.com/x/y/pull/1", "date": "20260530"}), encoding="utf-8"
+        )
+
+        db = tmp_path / "test.db"
+        _make_meta_recs_db(db, [{"type": "remove_subreddit", "target": "startups", "recurrence": 3, "acted": 1}])
+
+        def fake_run(cmd, **kwargs):
+            return sp_module.CompletedProcess(cmd, 0, stdout=json.dumps({"state": "CLOSED"}), stderr="")
+
+        monkeypatch.setattr("saas_radar.agents.tuner.subprocess.run", fake_run)
+        sync_acted_status(str(db), state_file)
+
+        conn = sqlite3.connect(str(db))
+        row = conn.execute("SELECT acted FROM meta_recommendations WHERE target = 'startups'").fetchone()
+        conn.close()
+        assert row[0] == 0
+
+    def test_no_resetea_cuando_pr_merged(self, tmp_path, monkeypatch):
+        import subprocess as sp_module
+
+        from saas_radar.agents.tuner import sync_acted_status
+
+        state_file = tmp_path / "tuner_state.json"
+        state_file.write_text(json.dumps({"pr_url": "https://github.com/x/y/pull/1"}), encoding="utf-8")
+
+        db = tmp_path / "test.db"
+        _make_meta_recs_db(db, [{"type": "remove_subreddit", "target": "startups", "recurrence": 3, "acted": 1}])
+
+        def fake_run(cmd, **kwargs):
+            return sp_module.CompletedProcess(cmd, 0, stdout=json.dumps({"state": "MERGED"}), stderr="")
+
+        monkeypatch.setattr("saas_radar.agents.tuner.subprocess.run", fake_run)
+        sync_acted_status(str(db), state_file)
+
+        conn = sqlite3.connect(str(db))
+        row = conn.execute("SELECT acted FROM meta_recommendations WHERE target = 'startups'").fetchone()
+        conn.close()
+        assert row[0] == 1  # no se resetea
+
+    def test_noop_sin_state_file(self, tmp_path):
+        from saas_radar.agents.tuner import sync_acted_status
+
+        # No debe lanzar excepcion
+        sync_acted_status(str(tmp_path / "nope.db"), tmp_path / "nope.json")
+
+
+# ── TestCliApply ─────────────────────────────────────────────────────────
+
+
+class TestCliApply:
+    """E2E del modo --apply con subprocess mockeado."""
+
+    def _prepare_env(self, tmp_path: Path, monkeypatch):
+        """Monta runs-dir + BD temporal + config.py minimo."""
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
+        # 3 runs con query muerta → triggea remove_query
+        for ts in ("2026-04-18T000000", "2026-04-19T000000", "2026-04-20T000000"):
+            _write_meta(runs_dir / f"{ts}_meta.json", empty_queries=["dead query"])
+
+        db = tmp_path / "saas.db"
+        _make_meta_recs_db(db, [])
+
+        # Config minimo
+        config_py = tmp_path / "config.py"
+        config_py.write_text(
+            'HIGH_SIGNAL_SUBREDDITS = {\n    "msp",\n}\n\n'
+            'SUBREDDITS = [\n    "zapier",\n]\n\n'
+            'PAIN_SEARCH_QUERIES = [\n    "dead query",\n    "live query",\n]\n',
+            encoding="utf-8",
+        )
+
+        readme = tmp_path / "README.md"
+        readme.write_text("# Test README\n", encoding="utf-8")
+
+        from saas_radar import config as saas_config
+
+        monkeypatch.setattr(saas_config, "HIGH_SIGNAL_SUBREDDITS", set(), raising=False)
+        monkeypatch.setattr(saas_config, "SUBREDDITS", ["zapier"], raising=False)
+        monkeypatch.setattr(saas_config, "PAIN_SEARCH_QUERIES", ["dead query", "live query"], raising=False)
+
+        return runs_dir, db, config_py, readme
+
+    def test_apply_crea_pr_y_marca_acted(self, tmp_path, monkeypatch):
+        import subprocess as sp_module
+
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(list(cmd))
+            if cmd[:2] == ["gh", "pr"] and cmd[2] == "list":
+                return sp_module.CompletedProcess(cmd, 0, stdout="[]", stderr="")
+            if cmd[:2] == ["gh", "pr"] and cmd[2] == "create":
+                return sp_module.CompletedProcess(
+                    cmd, 0, stdout="https://github.com/x/y/pull/99\n", stderr=""
+                )
+            return sp_module.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        monkeypatch.setattr("saas_radar.agents.tuner.subprocess.run", fake_run)
+
+        runs_dir, db, config_py, readme = self._prepare_env(tmp_path, monkeypatch)
+
+        rc = main(
+            [
+                "--runs-dir",
+                str(runs_dir),
+                "--db-path",
+                str(db),
+                "--config-path",
+                str(config_py),
+                "--readme-path",
+                str(readme),
+                "--lookback",
+                "5",
+                "--max-changes",
+                "5",
+                "--apply",
+            ]
+        )
+
+        assert rc == 0
+        # config.py debe haberse modificado
+        assert "dead query" not in config_py.read_text(encoding="utf-8")
+        # gh pr create fue llamado
+        assert any("create" in c for c in calls if "pr" in str(c))
+        # README tiene registro de tuning
+        readme_text = readme.read_text(encoding="utf-8")
+        assert "Registro de tuning automatico" in readme_text or "auto-tuning" in readme_text.lower()
+
+    def test_apply_skip_cuando_pr_ya_abierto(self, tmp_path, monkeypatch, capsys):
+        import subprocess as sp_module
+
+        def fake_run(cmd, **kwargs):
+            if cmd[:2] == ["gh", "pr"] and cmd[2] == "list":
+                return sp_module.CompletedProcess(
+                    cmd,
+                    0,
+                    stdout=json.dumps(
+                        [{"headRefName": "chore/auto-tuning-20260530", "url": "https://github.com/x/y/pull/99"}]
+                    ),
+                    stderr="",
+                )
+            return sp_module.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        monkeypatch.setattr("saas_radar.agents.tuner.subprocess.run", fake_run)
+
+        runs_dir, db, config_py, readme = self._prepare_env(tmp_path, monkeypatch)
+        original_config = config_py.read_text(encoding="utf-8")
+
+        rc = main(
+            [
+                "--runs-dir",
+                str(runs_dir),
+                "--db-path",
+                str(db),
+                "--config-path",
+                str(config_py),
+                "--readme-path",
+                str(readme),
+                "--apply",
+            ]
+        )
+
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "SKIP" in out
+        # config.py NO debe haberse modificado
+        assert config_py.read_text(encoding="utf-8") == original_config

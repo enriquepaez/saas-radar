@@ -375,7 +375,7 @@
         "Verificación manual: 1 PR auto mergeado documentado en progress/"
       ],
       "depends_on": [18],
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 21,

@@ -292,3 +292,17 @@ Suite completa pasa (exit code 0). Reviewer aprobó todos los acceptance criteri
 - **Verificación:** 54 tests nuevos, suite completa → todos pasan (0 fallos, 0 regresiones). `./init.sh` → OK.
 - **Review:** APROBADO por reviewer subagente.
 - **Cierre:** Feature #18 marcada `done`. Desbloquea: #20 (tuner_a4_pr_mode) y #21 (llm_heuristic_tuner, junto con #13 ✓ y #8 ✓).
+
+---
+
+## Sesión 2026-05-30 — Feature #20: tuner_a4_pr_mode
+
+- **Feature:** #20 `tuner_a4_pr_mode` — Tuner modo PR real con `--apply` + `gh pr create`
+- **Agente:** implementer + reviewer
+- **Archivos modificados:**
+  - `src/saas_radar/agents/tuner.py` — añadidas 7 funciones nuevas: `apply_proposals`, `_find_block_range`, `_insert_into_set`, `_remove_from_collection`, `check_open_pr`, `mark_acted`, `sync_acted_status`, `_append_readme_registry`. Flag `--apply` + flujo completo en `main()`.
+  - `tests/test_tuner.py` — 14 → 35 tests (4 clases nuevas: TestApplyProposals, TestCheckOpenPr, TestMarkActed, TestCliApply).
+  - `.github/workflows/tuner.yml` — permisos `contents:write` + `pull-requests:write` + step `Run tuner (apply PR)`.
+- **Verificación:** suite completa (35 tests en test_tuner.py, todos pasan; suite global exit code 0). `./init.sh` → OK.
+- **Review:** APROBADO por reviewer subagente.
+- **Cierre:** Feature #20 marcada `done`. Desbloquea: #21 (llm_heuristic_tuner, todas las deps ✓).

@@ -15,6 +15,9 @@ jobs:
     # Solo si el pipeline que disparo termino en exito (o si es disparo manual).
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
 
     steps:
       - name: Checkout main
@@ -71,3 +74,15 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python -m saas_radar.notifications.telegram tuner-report tuner_report.txt
+
+      - name: Run tuner (apply PR)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python -m saas_radar.agents.tuner \
+            --runs-dir persist/data/runs \
+            --db-path persist/data/saas.db \
+            --lookback 10 \
+            --max-changes 5 \
+            --apply \
+            --readme-path README.md
