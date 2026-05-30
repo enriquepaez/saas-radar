@@ -154,12 +154,19 @@ def test_e2e_full_pipeline_with_mocks(tmp_path):
 
 
 def test_phase_gtm_stub_prints_message(capsys):
+    """phase_gtm llama a run_all_pending e imprime el resumen de resultados."""
+    from unittest.mock import patch
+
     from saas_radar.main import phase_gtm
 
-    phase_gtm()
+    mock_result = {"generated": 0, "skipped_low_viability": 0, "failed": 0, "skipped_existing": 0}
+    with patch("saas_radar.agents.gtm_agent.run_all_pending", return_value=mock_result):
+        phase_gtm()
+
     captured = capsys.readouterr()
     assert "FASE 5" in captured.out
-    assert "GTM agent: fase pendiente (feature #17)" in captured.out
+    # Verifica que se imprime el resumen real (no el mensaje de stub)
+    assert "GTM:" in captured.out or "[WARN]" in captured.out
 
 
 # ── Test 8: Fase 3 usa ThreadPoolExecutor con max_workers=COMMENT_FETCH_WORKERS

@@ -42,6 +42,12 @@ Cada feature se trabaja en su propia rama. El usuario hace el merge desde GitHub
 - Al terminar, push de la rama. El usuario abre y mergea el PR desde GitHub.
 - ❌ **NUNCA hagas commit ni push directamente a `main`**, ni para features, ni para fixes, ni para correcciones menores. Sin excepción.
 
+#### Pull Request
+
+Al crear PRs con `gh pr create`:
+- ❌ **No incluyas** ninguna firma de autoría.
+- El body debe contener solo información útil para el revisor: cambios, tests, verificación, siguiente feature desbloqueada.
+
 #### Commit al cierre
 
 Cuando el reviewer aprueba, **antes de cerrar la sesión**:
