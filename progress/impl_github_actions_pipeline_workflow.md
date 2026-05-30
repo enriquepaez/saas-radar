@@ -4,6 +4,10 @@
 
 - **`.github/workflows/pipeline.yml`**: reemplazo completo. Antes: checkout dual main+data, creación condicional de rama `data`, restore manual de `saas.db` desde `persist/`, commit y push a rama `data` con guard `git diff --cached --quiet`, `permissions: contents: write`. Después: un solo checkout de `main`, `actions/cache@v4` para persistir `data/saas.db` entre runs, `actions/upload-artifact@v4` para guardar JSONs de `data/runs/`, `permissions: contents: read`.
 
+- **`src/saas_radar/main.py`**: corregida la llamada a `run_ai_analysis()` que usaba nombres de argumento incorrectos. `top_posts=` → `top_n=`, `output=` → `output_path=`. Añadido `provider=os.getenv("AI_PROVIDER", "claude")` para que el workflow pueda seleccionar el proveedor LLM vía secret. El bug causaba `TypeError` al llegar a la fase IA y el pipeline terminaba en error tras 16 min de scraping.
+
+- **`CLAUDE.md`**: añadida regla explícita `❌ NUNCA hagas commit ni push directamente a main`. La regla incluye que los fixes surgidos durante la verificación van en la rama de feature activa, no en main.
+
 - **`tests/test_pipeline_workflow.py`**: reemplazo completo. Eliminados los tests que validaban la lógica de rama `data` (`test_workflow_job_steps_checkout_data_persist`, `test_workflow_job_steps_copy_outputs`, `test_workflow_job_steps_commit_push`, `test_workflow_job_steps_commit_guard`). Añadidos: `test_has_cache_restore_step`, `test_cache_key_uses_run_id`, `test_has_artifact_upload_step`, `test_artifact_retention_days`, `test_no_data_branch_checkout`, `test_has_required_env_secrets` (valida los 9 secrets), `test_permissions_contents_read`. Mantenidos los tests que siguen siendo válidos. Total: 19 tests (antes: 17).
 
 ## Por qué
@@ -69,6 +73,45 @@ fi
 ```
 
 GitHub Actions pasa los inputs de `workflow_dispatch` como strings; por eso se compara con `"true"` (string) en lugar de `true` (booleano). Si el trigger es el cron (schedule), `github.event.inputs.full_scan` es vacío y la rama `else` ejecuta el pipeline en modo incremental.
+
+### Fix: `run_ai_analysis()` — argumentos incorrectos en `main.py`
+
+Descubierto al ejecutar el primer run real en GitHub Actions. El pipeline completó 16 min de scraping y falló al llegar a la fase IA con:
+
+```
+TypeError: run_ai_analysis() got an unexpected keyword argument 'top_posts'
+```
+
+La llamada en `main.py` usaba los nombres del legacy (`top_posts`, `output`) pero la función reconstruida en `ai_analyzer.py` usa `top_n` y `output_path`. Corrección:
+
+```python
+# Antes (buggy):
+run_ai_analysis(
+    min_score=min_score,
+    top_posts=top_posts,   # nombre incorrecto
+    output=output,          # nombre incorrecto
+    use_cached_extractions=use_cached_extractions,
+    post_age_days=post_age_days,
+)
+
+# Después (correcto):
+run_ai_analysis(
+    min_score=min_score,
+    top_n=top_posts,                              # nombre real del parámetro
+    output_path=output,                           # nombre real del parámetro
+    use_cached_extractions=use_cached_extractions,
+    post_age_days=post_age_days,
+    provider=os.getenv("AI_PROVIDER", "claude"),  # nuevo: lee env var del workflow
+)
+```
+
+`provider=os.getenv("AI_PROVIDER", "claude")` es necesario para que el secret `AI_PROVIDER` configurado en GitHub Actions llegue al dispatcher de LLMs. Sin esto, el pipeline siempre usaría Claude independientemente de lo configurado en los secrets.
+
+### Fix: creación de rama `data` — `git remote add` fallaba con "already exists"
+
+En el primer run, el step "Create data branch if it does not exist" fallaba con exit code 3 porque `actions/checkout@v4` ya había inicializado un repositorio git en `persist/` (aunque el checkout de la rama `data` fallara), dejando el remote `origin` ya configurado. El `git remote add origin ...` posterior lanzaba "error: remote origin already exists".
+
+Corrección: reemplazar `git init` + `git remote add` por `git remote set-url` (que funciona sobre un remote ya existente) y eliminar el `git init` redundante. Este fix fue supersedido posteriormente al eliminar toda la lógica de rama `data` en favor de `actions/cache`.
 
 ## Tests añadidos
 
