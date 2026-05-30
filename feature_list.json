@@ -324,7 +324,7 @@
         "Tests cubren los 3 estados (generated/skipped_low_viability/failed) + idempotencia + gate"
       ],
       "depends_on": [15],
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 18,

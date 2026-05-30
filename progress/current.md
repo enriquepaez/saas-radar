@@ -17,4 +17,4 @@ _Sin actividad._
 
 ## Próximo paso
 
-_Features disponibles: #17 (gtm_agent_b1_b2, depende de #15 ✓), #19 (logging_structured_l1_l2, depende de #2 ✓)._
+_Features disponibles: #18 (tuning_rules_a1_a2_a3, depende de #13 ✓ #14 ✓ #16 ✓), #19 (logging_structured_l1_l2, depende de #2 ✓)._
