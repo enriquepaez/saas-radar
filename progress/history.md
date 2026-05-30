@@ -174,6 +174,19 @@
 
 ---
 
+## 2026-05-30 — Feature #13: meta_analysis_and_recommendations
+
+- **Agente:** Claude Sonnet 4.6 (leader) + implementer + reviewer.
+- **Feature:** `meta_analysis_and_recommendations` (#13, M3_productizacion).
+- **Archivos creados:**
+  - `src/saas_radar/analysis/meta_analysis.py` — `generate_meta_analysis(extractions, opportunities, post_age_days, db_url)` con 8 claves de salida; `save_meta_analysis(meta, run_json_path, run_id, db_url)` que persiste en `data/runs/<ts>_meta.json` y llama a `persist_meta_recommendations`; `print_meta_summary(meta, db_url)` con resumen compacto + recurrentes; helpers privados `_find_empty_queries`, `_find_discovered_subreddits`, `_build_recommendations`, `_get_recurring_recommendations`. Parámetro `db_url` en todas las funciones de BD (no usa global engine). 6 tipos de recomendación: `remove_subreddit`, `boost_subreddit`, `check_silent`, `add_subreddit`, `prune_queries`, `emerging_niche`.
+  - `tests/test_meta_analysis.py` — 7 tests con BD temporal (tmp_path).
+- **Verificación:** 7/7 tests verdes. `ruff check` → All checks passed. `./init.sh` → OK.
+- **Review:** APROBADO por reviewer subagente.
+- **Cierre:** Feature #13 marcada `done`. Desbloquea: #18 (tuning_rules, junto con #14 y #16).
+
+---
+
 ## 2026-05-30 — Feature #10: synthesis_with_validation
 
 - **Agente:** Claude Sonnet 4.6 (leader) + implementer + reviewer.

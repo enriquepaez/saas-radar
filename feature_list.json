@@ -252,7 +252,7 @@
         "Tests con BD temporal: recurrence incrementa, recommendations se generan según hit_rate"
       ],
       "depends_on": [11],
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 14,

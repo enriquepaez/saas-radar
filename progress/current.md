@@ -17,4 +17,4 @@ _Sin actividad._
 
 ## Próximo paso
 
-_Arrancar feature #13 (meta_analysis_and_recommendations) — depende de #11 ✓._
+_Arrancar feature #14 (telegram_notifications, depende de #1 ✓) o #16 (github_actions_pipeline_workflow, depende de #12 ✓)._
