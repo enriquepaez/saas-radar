@@ -341,7 +341,7 @@
         "Tests: 26 tests para tuning_rules (clonar de legacy), 17 para tuner CLI, 4 para telegram tuner-report"
       ],
       "depends_on": [13, 14, 16],
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 19,

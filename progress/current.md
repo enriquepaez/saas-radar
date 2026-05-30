@@ -17,4 +17,4 @@ _Sin actividad._
 
 ## Próximo paso
 
-_Features disponibles: #18 (tuning_rules_a1_a2_a3, depende de #13 ✓ #14 ✓ #16 ✓), #19 (logging_structured_l1_l2, depende de #2 ✓)._
+_Features disponibles: #19 (logging_structured_l1_l2, depende de #2 ✓), #20 (tuner_a4_pr_mode, depende de #18 ✓), #21 (llm_heuristic_tuner, depende de #13 ✓ #8 ✓ #18 ✓)._

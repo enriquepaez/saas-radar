@@ -257,3 +257,19 @@
 - **Verificación:** 37 tests nuevos, 319 totales → todos pasan. `ruff check` → All checks passed. `./init.sh` → OK.
 - **Review:** APROBADO por reviewer subagente. Los 8 acceptance criteria verificados.
 - **Cierre:** Feature #17 marcada `done`. Desbloquea: #18 (tuning_rules_a1_a2_a3).
+
+---
+
+## Sesión 2026-05-30 — Feature #18: tuning_rules_a1_a2_a3
+
+- **Rama:** `feat/18-tuning_rules_a1_a2_a3`
+- **Archivos creados:**
+  - `src/saas_radar/agents/tuning_rules.py` — 4 reglas deterministas: `propose_promote_to_high_signal`, `propose_remove_from_subreddits`, `propose_demote_from_high_signal`, `propose_remove_queries`. Orquestadora `propose_all_changes` con orden conservador (remove_query > demote > remove_subreddit > add_high_signal). Dataclass `Proposal`. Helpers: `_aggregate_subreddit_stats`, `_count_consecutive_silent`, `_count_consecutive_empty_query`.
+  - `src/saas_radar/agents/tuner.py` — CLI dry-run: `load_recent_runs` (carga meta-JSONs con tolerancia a corruptos), `load_meta_recommendations` (sqlite3 directo), `prioritize_and_cap` (orden conservador + recurrence desc + cap), `render_report` (formato fijo con timestamp UTC), `render_config_diff` (pseudo-Python para preview). `main()` con import lazy de `from saas_radar import config`.
+  - `.github/workflows/tuner.yml` — trigger `workflow_run` sobre `saas-radar pipeline` (solo si conclusion=success) + `workflow_dispatch`. Checkout dual main+data, `pip install -e .[dev]`, NLTK download, ejecución del tuner, artefacto 30 días, Telegram.
+  - `tests/test_tuning_rules.py` — 26 tests portados del legacy.
+  - `tests/test_tuner.py` — 18 tests (17 del legacy + snapshot del formato del report).
+  - `tests/fixtures/tuner_report_expected.txt` — fixture de snapshot del render_report.
+- **Verificación:** 54 tests nuevos, suite completa → todos pasan (0 fallos, 0 regresiones). `./init.sh` → OK.
+- **Review:** APROBADO por reviewer subagente.
+- **Cierre:** Feature #18 marcada `done`. Desbloquea: #20 (tuner_a4_pr_mode) y #21 (llm_heuristic_tuner, junto con #13 ✓ y #8 ✓).
