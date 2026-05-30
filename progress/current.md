@@ -7,21 +7,19 @@
 - **Inicio:** 2026-05-30
 - **Agente:** implementer (lanzado por leader)
 
-## Plan
+## Plan (revisado: reemplazo rama data por actions/cache)
 
-1. Crear `.github/workflows/pipeline.yml` con cron `'0 8 * * *'` + `workflow_dispatch` (input `full_scan`).
-2. Checkout dual main+data (rama `data` para persistencia de BD).
-3. Restore de `persist/data/` (cache de la BD SQLite entre runs).
-4. Install deps + NLTK.
-5. Run del pipeline con `python -m saas_radar.main`.
-6. Commit y push a rama `data` solo si hay cambios.
-7. Concurrency group `'saas-radar'`, `cancel-in-progress: false`.
-8. Documentar secrets requeridos en `progress/impl_github_actions_pipeline_workflow.md`.
+1. Reemplazar `.github/workflows/pipeline.yml`: eliminar checkout dual y commit/push a rama `data`; usar `actions/cache@v4` para persistir `saas.db`.
+2. `key: saas-db-${{ github.run_id }}` guarda la BD tras cada run; `restore-keys: saas-db-` restaura la más reciente.
+3. Usar `actions/upload-artifact@v4` para guardar JSONs de `data/runs/` 30 días.
+4. Bajar `permissions` a `contents: read` (no hay push a ninguna rama).
+5. Actualizar `tests/test_pipeline_workflow.py` eliminando tests de rama `data` y añadiendo tests de cache/artifact.
 
 ## Bitácora
 
 - 2026-05-30: Feature marcada `in_progress`. Implementer lanzado.
+- 2026-05-30: Revisión: reemplazo lógica rama data por actions/cache para evitar error "file exceeds 50MB".
 
 ## Próximo paso
 
-Esperar resultado del implementer → lanzar reviewer.
+Verificar con pytest → llamar al reviewer.
