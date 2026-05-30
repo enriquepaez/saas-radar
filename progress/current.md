@@ -17,4 +17,4 @@ _Sin actividad._
 
 ## Próximo paso
 
-_Arrancar feature #11 (ai_analyzer_orchestrator) — depende de #2 ✓ y #10 ✓._
+_Arrancar feature #12 (main_cli_pipeline) — depende de #4 ✓ y #11 ✓._
