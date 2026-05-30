@@ -8,8 +8,13 @@ Entradas esperadas:
 - `runs`: lista de dicts con estructura de `data/runs/<ts>_meta.json`, ordenados
   del mas antiguo al mas reciente.
 - `meta_recommendations`: filas de la tabla `meta_recommendations` (dicts con
-  `type`, `target`, `recurrence`).
+  `type`, `target`, `recurrence`, `acted`).
 - Los subreddits se comparan siempre en minusculas.
+
+Reglas A5/A6/A7 (nuevas, basadas en meta_recommendations heurísticos):
+- A5 add_query: query_suggestion con recurrence >= 2 y acted = 0.
+- A6 add_subreddit: subreddit_suggestion con recurrence >= 2 y acted = 0.
+- A7 add_phrase: phrase_suggestion con recurrence >= 2 y acted = 0.
 """
 
 from __future__ import annotations
@@ -23,6 +28,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class Proposal:
     action: str  # "add_high_signal" | "remove_subreddit" | "demote_high_signal" | "remove_query"
+    #            # "add_query" | "add_subreddit" | "add_phrase" (A5/A6/A7)
     target: str
     reason: str
 
@@ -273,6 +279,114 @@ def propose_remove_queries(
     return proposals
 
 
+# ── Regla 5: añadir query sugerida por LLM ────────────────────────────────
+
+
+def propose_add_queries_from_llm(
+    meta_recommendations: list[dict],
+) -> list[Proposal]:
+    """README "Tuning del pipeline" — regla A5.
+
+    Propone add_query para cada meta_recommendations con:
+    - type == 'query_suggestion'
+    - recurrence >= 2
+    - acted == 0
+    """
+    proposals: list[Proposal] = []
+    seen: set[str] = set()
+    for rec in meta_recommendations:
+        if rec.get("type") != "query_suggestion":
+            continue
+        if int(rec.get("recurrence", 0)) < 2:
+            continue
+        if int(rec.get("acted", 0)) != 0:
+            continue
+        target = rec.get("target", "")
+        if not target or target in seen:
+            continue
+        seen.add(target)
+        proposals.append(
+            Proposal(
+                action="add_query",
+                target=target,
+                reason=f"LLM sugirió esta query en {rec['recurrence']} runs consecutivos.",
+            )
+        )
+    return proposals
+
+
+# ── Regla 6: añadir subreddit sugerido por LLM ────────────────────────────
+
+
+def propose_add_subreddits_from_llm(
+    meta_recommendations: list[dict],
+) -> list[Proposal]:
+    """README "Tuning del pipeline" — regla A6.
+
+    Propone add_subreddit para cada meta_recommendations con:
+    - type == 'subreddit_suggestion'
+    - recurrence >= 2
+    - acted == 0
+    """
+    proposals: list[Proposal] = []
+    seen: set[str] = set()
+    for rec in meta_recommendations:
+        if rec.get("type") != "subreddit_suggestion":
+            continue
+        if int(rec.get("recurrence", 0)) < 2:
+            continue
+        if int(rec.get("acted", 0)) != 0:
+            continue
+        target = rec.get("target", "")
+        if not target or target in seen:
+            continue
+        seen.add(target)
+        proposals.append(
+            Proposal(
+                action="add_subreddit",
+                target=target,
+                reason=f"LLM sugirió este subreddit en {rec['recurrence']} runs consecutivos.",
+            )
+        )
+    return proposals
+
+
+# ── Regla 7: añadir frase de dolor sugerida por LLM ──────────────────────
+
+
+def propose_add_phrases_from_llm(
+    meta_recommendations: list[dict],
+) -> list[Proposal]:
+    """README "Tuning del pipeline" — regla A7.
+
+    Propone add_phrase para cada meta_recommendations con:
+    - type == 'phrase_suggestion'
+    - recurrence >= 2
+    - acted == 0
+    """
+    proposals: list[Proposal] = []
+    seen: set[str] = set()
+    for rec in meta_recommendations:
+        if rec.get("type") != "phrase_suggestion":
+            continue
+        if int(rec.get("recurrence", 0)) < 2:
+            continue
+        if int(rec.get("acted", 0)) != 0:
+            continue
+        target = rec.get("target", "")
+        if not target or target in seen:
+            continue
+        seen.add(target)
+        proposals.append(
+            Proposal(
+                action="add_phrase",
+                target=target,
+                reason=f"LLM sugirió esta frase en {rec['recurrence']} runs consecutivos.",
+            )
+        )
+    return proposals
+
+
 # ── Orquestador ───────────────────────────────────────────────────────────
 
 
@@ -283,15 +397,18 @@ def propose_all_changes(
     current_subreddits: list[str],
     current_queries: list[str],
 ) -> list[Proposal]:
-    """Aplica las 4 reglas y devuelve la lista consolidada.
+    """Aplica las 7 reglas y devuelve la lista consolidada.
 
-    Orden: conservador primero (remove_query, demote, remove_subreddit) y
-    despues add_high_signal. Permite al consumidor cortar el stream si
-    aplica un cap de cambios por iteracion.
+    Orden: conservador primero (A1-A4: remove/demote), luego expansión
+    (A1 add_high_signal), luego sugerencias LLM (A5-A7: add_query/subreddit/phrase).
+    Permite al consumidor cortar el stream si aplica un cap de cambios por iteracion.
     """
     proposals: list[Proposal] = []
     proposals.extend(propose_remove_queries(runs, current_queries))
     proposals.extend(propose_demote_from_high_signal(runs, current_high_signal))
     proposals.extend(propose_remove_from_subreddits(runs, meta_recommendations, current_subreddits))
     proposals.extend(propose_promote_to_high_signal(runs, current_high_signal))
+    proposals.extend(propose_add_queries_from_llm(meta_recommendations))
+    proposals.extend(propose_add_subreddits_from_llm(meta_recommendations))
+    proposals.extend(propose_add_phrases_from_llm(meta_recommendations))
     return proposals

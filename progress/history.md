@@ -306,3 +306,19 @@ Suite completa pasa (exit code 0). Reviewer aprobó todos los acceptance criteri
 - **Verificación:** suite completa (35 tests en test_tuner.py, todos pasan; suite global exit code 0). `./init.sh` → OK.
 - **Review:** APROBADO por reviewer subagente.
 - **Cierre:** Feature #20 marcada `done`. Desbloquea: #21 (llm_heuristic_tuner, todas las deps ✓).
+
+---
+
+## Sesión 2026-05-30 — Feature #21: llm_heuristic_tuner
+
+- **Rama:** `feat/21-llm_heuristic_tuner`
+- **Archivos creados:**
+  - `src/saas_radar/agents/heuristic_tuner.py` — `generate_heuristic_suggestions(meta_json_path, top_posts_df, provider)` con prompt que incluye nichos recurrentes (recurrence≥2), top posts (title+snippet+subreddit), subreddits descubiertos y queries vacías. Llama a `call_llm(phase='synthesis')`. Valida schema JSON con `_parse_json_payload`; schema inválido → log WARNING + dict vacío. Dedup contra config (PAIN_SEARCH_QUERIES, SUBREDDITS, PAIN_SIGNAL_PHRASES). `persist_heuristic_suggestions(suggestions, db_path)` via sqlite3 con upsert (INSERT recurrence=1 o UPDATE recurrence+1). CLI `__main__` con `--meta-json`, `--provider`, `--dry-run`.
+  - `tests/test_heuristic_tuner.py` — 6 tests cubriendo todos los acceptance criteria.
+- **Archivos modificados:**
+  - `src/saas_radar/agents/tuning_rules.py` — reglas A5/A6/A7 en `propose_all_changes`: proponen `add_query`, `add_subreddit`, `add_phrase` cuando meta_recommendations tiene `type in {query_suggestion, subreddit_suggestion, phrase_suggestion}` y `recurrence >= 2` y `acted = 0`.
+  - `src/saas_radar/agents/tuner.py` — soporte para los nuevos tipos en el renderizado CLI del report.
+  - `src/saas_radar/main.py` — `phase_heuristic_tuner()` (import lazy, try/except) como fase 4.5, llamada desde `run_pipeline()` tras `generate_meta_analysis`.
+  - `tests/fixtures/tuner_report_expected.txt` — snapshot actualizado con nuevos tipos de propuesta.
+- **Verificación:** suite completa → exit code 0. Reviewer aprobó todos los acceptance criteria.
+- **Cierre:** Feature #21 marcada `done`. Milestone M4_operacion_avanzada completado. Todas las features del proyecto done.

@@ -395,7 +395,7 @@
         "Tests con mock de call_llm: schema válido genera sugerencias correctas, dedup evita duplicar config existente, dry-run no escribe en BD, recurrence incrementa en segunda llamada con mismo (type, target), schema inválido no crashea"
       ],
       "depends_on": [13, 8, 18],
-      "status": "pending"
+      "status": "done"
     }
   ]
 }

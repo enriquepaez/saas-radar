@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import sys
 import time
@@ -11,7 +12,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
 
 from saas_radar.analysis.ai_analyzer import run_ai_analysis
-from saas_radar.logging_setup import setup_logging
 from saas_radar.analysis.pain_filter import _semantic_score
 from saas_radar.analysis.post_classifier import classify_post
 from saas_radar.analysis.text_cleaning import clean_text
@@ -25,8 +25,11 @@ from saas_radar.config import (
     PAIN_SEARCH_QUERIES,
     SUBREDDITS,
 )
+from saas_radar.logging_setup import setup_logging
 from saas_radar.scrapers.reddit_scraper import fetch_posts, fetch_top_comments, search_pain_posts
 from saas_radar.storage.db import db_stats, has_successful_run, init_db, save_to_db
+
+logger = logging.getLogger(__name__)
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -153,6 +156,30 @@ def phase_comments(posts_df: pd.DataFrame) -> None:
     save_to_db(comments_df, table_name="reddit_comments")
 
 
+def phase_heuristic_tuner(meta_json_path: str, top_posts_df: pd.DataFrame, provider: str) -> None:
+    """Fase 4.5: genera y persiste sugerencias heurísticas via LLM.
+
+    Envuelta en try/except: si falla, loguea WARNING y el pipeline continúa.
+    Import lazy de heuristic_tuner para evitar dependencia circular al nivel de módulo.
+    """
+    try:
+        from saas_radar import config
+        from saas_radar.agents.heuristic_tuner import (
+            generate_heuristic_suggestions,
+            persist_heuristic_suggestions,
+        )
+
+        suggestions = generate_heuristic_suggestions(
+            meta_json_path=meta_json_path,
+            top_posts_df=top_posts_df,
+            provider=provider,
+        )
+        db_path = config.DB_URL.replace("sqlite:///", "")
+        persist_heuristic_suggestions(suggestions, db_path)
+    except Exception as exc:
+        logger.warning("Fase 4.5 heuristic_tuner falló (pipeline continúa): %s", exc)
+
+
 def phase_gtm(min_priority: int = 7) -> None:
     print("\n-- FASE 5: GTM agent (opps canonicas pendientes)")
     try:
@@ -216,6 +243,8 @@ def run_pipeline(
     else:
         print("\n  Scraping omitido (--skip-scrape). Usando datos existentes en la BD.")
 
+    meta_json_path: str | None = None
+
     if not skip_ai:
         t0 = time.time()
         run_ai_analysis(
@@ -227,8 +256,28 @@ def run_pipeline(
             provider=os.getenv("AI_PROVIDER", "claude"),
         )
         print(f"   Análisis IA:     {_fmt(time.time() - t0)}")
+
+        # Buscar el meta-JSON más reciente para la fase 4.5
+        import glob as _glob
+        meta_files = sorted(_glob.glob("data/runs/*_meta.json"))
+        if meta_files:
+            meta_json_path = meta_files[-1]
     else:
         print("\n  Analisis IA omitido (--skip-ai).")
+
+    # ── FASE 4.5: sugerencias heurísticas LLM ─────────────────────────────
+    if meta_json_path is not None:
+        print("\n-- FASE 4.5: Sugerencias heurísticas LLM")
+        top_posts_df = all_posts.copy() if not all_posts.empty else pd.DataFrame(
+            columns=["title", "text", "subreddit", "semantic_score"]
+        )
+        if not top_posts_df.empty and "semantic_score" in top_posts_df.columns:
+            top_posts_df = top_posts_df.sort_values("semantic_score", ascending=False).head(20)
+        phase_heuristic_tuner(
+            meta_json_path=meta_json_path,
+            top_posts_df=top_posts_df,
+            provider=os.getenv("AI_PROVIDER", "claude"),
+        )
 
     if not skip_gtm:
         phase_gtm()
