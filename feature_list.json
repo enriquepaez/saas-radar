@@ -235,7 +235,7 @@
         "El skip-gtm fase aún no llama al agente (eso es feature #17); el flag solo se acepta sin error"
       ],
       "depends_on": [4, 11],
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 13,

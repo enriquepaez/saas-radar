@@ -17,4 +17,4 @@ _Sin actividad._
 
 ## Próximo paso
 
-_Arrancar feature #12 (main_cli_pipeline) — depende de #4 ✓ y #11 ✓._
+_Arrancar feature #13 (meta_analysis_and_recommendations) — depende de #11 ✓._

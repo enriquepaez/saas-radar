@@ -164,6 +164,16 @@
 
 ---
 
+## 2026-05-30 — Feature #12: main_cli_pipeline
+
+- **Feature:** #12 — CLI main.py con todas las fases + detección de modo
+- **Estado final:** APROBADO por reviewer
+- **Tests:** 10 nuevos (227 suite completa) → todos pasan
+- **Archivos creados:** `src/saas_radar/main.py`, `tests/test_main.py`
+- **Detalles:** `progress/impl_main_cli_pipeline.md`, `progress/review_main_cli_pipeline.md`
+
+---
+
 ## 2026-05-30 — Feature #10: synthesis_with_validation
 
 - **Agente:** Claude Sonnet 4.6 (leader) + implementer + reviewer.
