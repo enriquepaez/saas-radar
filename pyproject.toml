@@ -21,6 +21,7 @@ dev = [
     "pytest>=8.0",
     "ruff>=0.4",
     "respx>=0.21",
+    "pyyaml>=6.0.3",
 ]
 
 [tool.setuptools.packages.find]
@@ -37,3 +38,4 @@ ignore = ["E501", "E701"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+
