@@ -136,6 +136,8 @@ def _send_message(token: str, chat_id: str, text: str) -> bool:
 
 
 if __name__ == "__main__":
+    from dotenv import load_dotenv
+    load_dotenv()
     import argparse
     import sys
 
