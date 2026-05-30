@@ -5,6 +5,18 @@
 
 ---
 
+## Sesión 2026-05-30 — Feature #16: github_actions_pipeline_workflow
+
+- Workflow `.github/workflows/pipeline.yml` con cron diario `0 8 * * *` y `workflow_dispatch`
+- Persistencia de `saas.db` con `actions/cache@v4` (reemplaza lógica de rama `data` que daba error de 50MB)
+- Fix `run_ai_analysis()`: args incorrectos `top_posts→top_n`, `output→output_path`, añadido `provider=os.getenv("AI_PROVIDER")`
+- Fix creación rama `data`: `git remote set-url` en lugar de `git remote add`
+- Regla en `CLAUDE.md`: NUNCA commitear directamente en `main`
+- Run real verificado: run ID 26683979527, success, 17m28s
+- 19 tests en `tests/test_pipeline_workflow.py`
+
+---
+
 ## Sesión 2026-05-30 — Feature #11: ai_analyzer_orchestrator
 
 - **Feature:** #11 — Orquestador IA con cache defensivo + persistencia

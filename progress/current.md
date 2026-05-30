@@ -3,23 +3,18 @@
 > Este archivo se vacía al cerrar cada sesión y se mueve a `history.md`.
 > Mientras trabajas, **mantenlo actualizado en tiempo real**, no al final.
 
-- **Feature en curso:** #16 — `github_actions_pipeline_workflow`
-- **Inicio:** 2026-05-30
-- **Agente:** implementer (lanzado por leader)
+- **Feature en curso:** —
+- **Inicio:** —
+- **Agente:** —
 
-## Plan (revisado: reemplazo rama data por actions/cache)
+## Plan
 
-1. Reemplazar `.github/workflows/pipeline.yml`: eliminar checkout dual y commit/push a rama `data`; usar `actions/cache@v4` para persistir `saas.db`.
-2. `key: saas-db-${{ github.run_id }}` guarda la BD tras cada run; `restore-keys: saas-db-` restaura la más reciente.
-3. Usar `actions/upload-artifact@v4` para guardar JSONs de `data/runs/` 30 días.
-4. Bajar `permissions` a `contents: read` (no hay push a ninguna rama).
-5. Actualizar `tests/test_pipeline_workflow.py` eliminando tests de rama `data` y añadiendo tests de cache/artifact.
+_Sin feature activa._
 
 ## Bitácora
 
-- 2026-05-30: Feature marcada `in_progress`. Implementer lanzado.
-- 2026-05-30: Revisión: reemplazo lógica rama data por actions/cache para evitar error "file exceeds 50MB".
+_Sin actividad._
 
 ## Próximo paso
 
-Verificar con pytest → llamar al reviewer.
+_Features disponibles: #17 (gtm_agent_b1_b2, depende de #15 ✓), #19 (logging_structured_l1_l2, depende de #2 ✓)._
