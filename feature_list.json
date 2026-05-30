@@ -217,7 +217,7 @@
         "Tests con respx para mockear los providers + BD temporal SQLite: flujo completo, cache defensivo, abort por len<2"
       ],
       "depends_on": [2, 10],
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 12,
