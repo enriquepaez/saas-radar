@@ -17,4 +17,4 @@ _Sin actividad._
 
 ## Próximo paso
 
-_Feature disponible: #21 (llm_heuristic_tuner, depende de #13 ✓ #8 ✓ #18 ✓ — todas done)._
+_Todas las features del proyecto completadas (M1–M4, features #1–#21)._

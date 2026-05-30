@@ -83,6 +83,9 @@ _ACTION_ORDER = {
     "demote_high_signal": 1,
     "remove_subreddit": 2,
     "add_high_signal": 3,
+    "add_query": 4,
+    "add_subreddit": 5,
+    "add_phrase": 6,
 }
 
 
@@ -126,6 +129,9 @@ def prioritize_and_cap(
 _META_TYPE_TO_ACTION = {
     "remove_subreddit": "remove_subreddit",
     "boost_subreddit": "add_high_signal",
+    "query_suggestion": "add_query",
+    "subreddit_suggestion": "add_subreddit",
+    "phrase_suggestion": "add_phrase",
 }
 
 
@@ -150,7 +156,15 @@ def _run_timestamp(run: dict) -> str:
 
 def render_report(data: ReportData, runs_ts: list[str]) -> str:
     """Genera el texto del dry-run report."""
-    counts = {"add_high_signal": 0, "demote_high_signal": 0, "remove_subreddit": 0, "remove_query": 0}
+    counts = {
+        "add_high_signal": 0,
+        "demote_high_signal": 0,
+        "remove_subreddit": 0,
+        "remove_query": 0,
+        "add_query": 0,
+        "add_subreddit": 0,
+        "add_phrase": 0,
+    }
     for p in data.applied_proposals:
         counts[p.action] = counts.get(p.action, 0) + 1
 
@@ -176,7 +190,10 @@ def render_report(data: ReportData, runs_ts: list[str]) -> str:
         f"RESUMEN: add={counts['add_high_signal']} "
         f"demote={counts['demote_high_signal']} "
         f"remove_sub={counts['remove_subreddit']} "
-        f"remove_query={counts['remove_query']}"
+        f"remove_query={counts['remove_query']} "
+        f"add_query={counts['add_query']} "
+        f"add_sub={counts['add_subreddit']} "
+        f"add_phrase={counts['add_phrase']}"
     )
     return "\n".join(lines)
 
