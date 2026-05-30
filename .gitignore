@@ -14,6 +14,9 @@ venv/
 # Datos locales (BD, caches, runs, reportes)
 # La BD viaja por la rama `data` del repo (heredado del legacy).
 data/
+extractions_cache.json
+extractions_cache.json.failed.json
+tuner_report.txt
 
 # Build artefacts
 build/
