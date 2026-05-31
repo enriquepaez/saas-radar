@@ -32,6 +32,7 @@ jobs:
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       AI_PROVIDER: ${{ secrets.AI_PROVIDER }}
+      EXTRACTION_PROVIDER: ${{ secrets.EXTRACTION_PROVIDER }}
 
     steps:
       - name: Checkout main
