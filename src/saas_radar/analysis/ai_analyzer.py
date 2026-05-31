@@ -11,6 +11,7 @@ from typing import Any
 
 import pandas as pd
 
+from saas_radar import config
 from saas_radar.analysis.data_loader import load_pain_posts
 from saas_radar.analysis.extraction import (
     DEEP_EXTRACTION_THRESHOLD,
@@ -172,6 +173,9 @@ def run_ai_analysis(
     start_time = time.time()
     timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
 
+    # Nivel de entrada: única lectura de config.* permitida (architecture.md §3)
+    extraction_provider = config.EXTRACTION_PROVIDER
+
     # ── Paso 1: init_db ───────────────────────────────────────────────────────
     init_db(db_url)
 
@@ -221,9 +225,9 @@ def run_ai_analysis(
             all_extractions: list[dict] = json.loads(cache_p.read_text(encoding="utf-8"))
         except Exception as exc:
             logger.warning("Cache corrupto (%s) — re-extrayendo", exc)
-            all_extractions = _extract_and_cache(posts_list, extractions_cache_path, provider=provider)
+            all_extractions = _extract_and_cache(posts_list, extractions_cache_path, extraction_provider=extraction_provider)
     else:
-        all_extractions = _extract_and_cache(posts_list, extractions_cache_path, provider=provider)
+        all_extractions = _extract_and_cache(posts_list, extractions_cache_path, extraction_provider=extraction_provider)
 
     valid_extractions = _clean_extractions(all_extractions)
     logger.info("Extracciones válidas: %d / %d", len(valid_extractions), len(all_extractions))
@@ -342,22 +346,39 @@ def run_ai_analysis(
 # ── Helpers internos ──────────────────────────────────────────────────────────
 
 
-def _extract_and_cache(posts_list: list[pd.Series], cache_path: str, provider: str = "claude") -> list[dict]:
+def _extract_and_cache(
+    posts_list: list[pd.Series], cache_path: str, extraction_provider: str = "claude"
+) -> list[dict]:
     """Ejecuta la extracción y guarda el resultado en cache.
 
     Selecciona el modo de extracción según DEEP_EXTRACTION_THRESHOLD:
     - len(posts) <= threshold → extract_problem_deep por cada post.
     - len(posts) > threshold → run_batch_extraction en batches de 5.
 
+    extraction_provider se recibe como argumento explícito desde run_ai_analysis,
+    que es el único nivel autorizado para leer config.* (architecture.md §3).
+    Esto permite usar Groq (sin rate limit severo) para extracción y el provider
+    configurado (Gemini/Claude) para síntesis.
+
     Siempre llama a _save_extractions_cache tras la extracción, incluso
     si el resultado está vacío (el cache defensivo decide si sobrescribe).
     """
     if len(posts_list) <= DEEP_EXTRACTION_THRESHOLD:
-        logger.info("Modo deep (N=%d <= %d): extracción post a post", len(posts_list), DEEP_EXTRACTION_THRESHOLD)
-        extractions = [extract_problem_deep(row, provider=provider) for row in posts_list]
+        logger.info(
+            "Modo deep (N=%d <= %d): extracción post a post con provider=%s",
+            len(posts_list),
+            DEEP_EXTRACTION_THRESHOLD,
+            extraction_provider,
+        )
+        extractions = [extract_problem_deep(row, provider=extraction_provider) for row in posts_list]
     else:
-        logger.info("Modo batch (N=%d > %d): extracción en batches de 5", len(posts_list), DEEP_EXTRACTION_THRESHOLD)
-        extractions = run_batch_extraction(posts_list, provider=provider)
+        logger.info(
+            "Modo batch (N=%d > %d): extracción en batches de 5 con provider=%s",
+            len(posts_list),
+            DEEP_EXTRACTION_THRESHOLD,
+            extraction_provider,
+        )
+        extractions = run_batch_extraction(posts_list, provider=extraction_provider)
 
     _save_extractions_cache(extractions, cache_path)
     return extractions

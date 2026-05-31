@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pandas as pd
 
@@ -454,3 +454,53 @@ def test_llm_none_in_synthesis(tmp_path):
     conn.close()
     assert rows[0][0] == "failed"
     assert "None" in rows[0][1]
+
+
+# ── Test 9: extracción usa EXTRACTION_PROVIDER aunque AI_PROVIDER sea distinto ──
+
+
+def test_extraction_uses_extraction_provider(tmp_path):
+    """Verifica que extract_problem_deep y run_batch_extraction se llaman con
+    el extraction_provider recibido como argumento, independiente del provider de síntesis.
+
+    Escenario: extraction_provider='groq' (leído de config en run_ai_analysis).
+    Con 2 posts (≤ DEEP_EXTRACTION_THRESHOLD=30) se usa extract_problem_deep.
+    Con 31 posts (> DEEP_EXTRACTION_THRESHOLD=30) se usa run_batch_extraction.
+    En ambos casos el provider pasado a la función de extracción debe ser 'groq'.
+
+    _extract_and_cache recibe extraction_provider como argumento explícito;
+    NO lee config.* (architecture.md §3: solo run_ai_analysis puede leer config).
+    """
+    import saas_radar.analysis.ai_analyzer as ai_mod
+
+    # ── Caso A: modo deep (N=2 <= 30) ──────────────────────────────────────
+    mock_deep = MagicMock(side_effect=lambda row, provider: _make_extraction(0))
+
+    with (
+        patch("saas_radar.analysis.ai_analyzer.extract_problem_deep", mock_deep),
+        patch("saas_radar.analysis.ai_analyzer._save_extractions_cache"),
+    ):
+        posts = [_make_post(i) for i in range(2)]
+        ai_mod._extract_and_cache(posts, "cache.json", extraction_provider="groq")
+
+    # Todas las llamadas deben haber usado provider='groq'
+    for c in mock_deep.call_args_list:
+        assert c.kwargs.get("provider") == "groq" or c.args[1] == "groq", (
+            f"extract_problem_deep llamado con provider incorrecto: {c}"
+        )
+
+    # ── Caso B: modo batch (N=31 > 30) ──────────────────────────────────────
+    mock_batch = MagicMock(return_value=[_make_extraction(0), _make_extraction(1)])
+
+    with (
+        patch("saas_radar.analysis.ai_analyzer.run_batch_extraction", mock_batch),
+        patch("saas_radar.analysis.ai_analyzer._save_extractions_cache"),
+    ):
+        posts_batch = [_make_post(i) for i in range(31)]
+        ai_mod._extract_and_cache(posts_batch, "cache.json", extraction_provider="groq")
+
+    mock_batch.assert_called_once()
+    _, kwargs = mock_batch.call_args
+    assert kwargs.get("provider") == "groq", (
+        f"run_batch_extraction llamado con provider={kwargs.get('provider')!r}, esperado 'groq'"
+    )
