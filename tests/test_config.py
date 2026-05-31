@@ -312,6 +312,37 @@ def test_claude_model_defaults():
         assert config.CLAUDE_SYNTHESIS_MODEL == "claude-sonnet-4-6"
 
 
+def test_extraction_provider_empty_string_falls_back_to_groq(monkeypatch):
+    """EXTRACTION_PROVIDER vacío ('') usa el default 'groq', igual que None."""
+    monkeypatch.setenv("EXTRACTION_PROVIDER", "")
+    from saas_radar import config
+
+    importlib.reload(config)
+    assert config.EXTRACTION_PROVIDER == "groq", (
+        f"EXTRACTION_PROVIDER='' debe caer en 'groq', got '{config.EXTRACTION_PROVIDER}'"
+    )
+
+
+def test_extraction_provider_env_override(monkeypatch):
+    """EXTRACTION_PROVIDER se lee correctamente cuando tiene valor no vacío."""
+    monkeypatch.setenv("EXTRACTION_PROVIDER", "gemini")
+    from saas_radar import config
+
+    importlib.reload(config)
+    assert config.EXTRACTION_PROVIDER == "gemini"
+
+
+def test_ai_provider_empty_string_falls_back_to_claude(monkeypatch):
+    """AI_PROVIDER vacío ('') usa el default 'claude', igual que None."""
+    monkeypatch.setenv("AI_PROVIDER", "")
+    from saas_radar import config
+
+    importlib.reload(config)
+    assert config.AI_PROVIDER == "claude", (
+        f"AI_PROVIDER='' debe caer en 'claude', got '{config.AI_PROVIDER}'"
+    )
+
+
 def test_no_print_on_import(capsys):
     """El módulo no produce output en stdout/stderr al importarse."""
     import saas_radar.config  # noqa: F401
