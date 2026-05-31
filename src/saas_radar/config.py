@@ -37,12 +37,12 @@ COMMENT_TARGET_POSTS = 200
 # ── AI / LLM ───────────────────────────────────────────────────────────────
 
 # Provider: "claude" (Anthropic), "gemini" (Google AI Studio), "groq" (fallback).
-AI_PROVIDER = os.getenv("AI_PROVIDER", "claude").lower()
+AI_PROVIDER = (os.getenv("AI_PROVIDER") or "claude").lower()
 
 # Provider para la fase de extracción (puede diferir de AI_PROVIDER para evitar rate limits).
 # Default "groq": límites generosos en free tier, ideal para los múltiples batches de extracción.
 # La síntesis sigue usando AI_PROVIDER.
-EXTRACTION_PROVIDER = os.getenv("EXTRACTION_PROVIDER", "groq").lower()
+EXTRACTION_PROVIDER = (os.getenv("EXTRACTION_PROVIDER") or "groq").lower()
 
 # Claude (Anthropic)
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
