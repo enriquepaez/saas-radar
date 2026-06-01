@@ -211,6 +211,7 @@ def run_ai_analysis(
             "top_3": [],
             "run_id": run_id,
             "json_path": None,
+            "posts_analyzed": 0,
         }
 
     posts_list: list[pd.Series] = [posts_df.iloc[i] for i in range(len(posts_df))]
@@ -259,6 +260,7 @@ def run_ai_analysis(
             "top_3": [],
             "run_id": run_id,
             "json_path": None,
+            "posts_analyzed": len(posts_list),
         }
 
     # ── Paso 5: síntesis ──────────────────────────────────────────────────────
@@ -291,6 +293,7 @@ def run_ai_analysis(
             "top_3": [],
             "run_id": run_id,
             "json_path": None,
+            "posts_analyzed": len(posts_list),
         }
 
     # ── Paso 6: validación ────────────────────────────────────────────────────
@@ -340,6 +343,7 @@ def run_ai_analysis(
         "top_3": top3,
         "run_id": run_id,
         "json_path": json_path,
+        "posts_analyzed": len(posts_list),
     }
 
 
