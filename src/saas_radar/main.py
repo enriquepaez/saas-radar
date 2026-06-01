@@ -26,6 +26,7 @@ from saas_radar.config import (
     SUBREDDITS,
 )
 from saas_radar.logging_setup import setup_logging
+from saas_radar.notifications.telegram import send_opportunity_alert, send_run_summary
 from saas_radar.scrapers.reddit_scraper import fetch_posts, fetch_top_comments, search_pain_posts
 from saas_radar.storage.db import db_stats, has_successful_run, init_db, save_to_db
 
@@ -214,6 +215,7 @@ def run_pipeline(
     if not full_scan and has_successful_run():
         incremental = True
     post_age_days = INCREMENTAL_POST_AGE_DAYS if incremental else MAX_POST_AGE_DAYS
+    mode = "INCREMENTAL" if incremental else "CARGA COMPLETA"
 
     if incremental:
         print("  Modo: INCREMENTAL (24h) -- run previo exitoso detectado")
@@ -244,10 +246,11 @@ def run_pipeline(
         print("\n  Scraping omitido (--skip-scrape). Usando datos existentes en la BD.")
 
     meta_json_path: str | None = None
+    ai_result: dict = {}
 
     if not skip_ai:
         t0 = time.time()
-        run_ai_analysis(
+        ai_result = run_ai_analysis(
             min_score=min_score,
             top_n=top_posts,
             output_path=output,
@@ -256,6 +259,8 @@ def run_pipeline(
             provider=os.getenv("AI_PROVIDER", "claude"),
         )
         print(f"   Análisis IA:     {_fmt(time.time() - t0)}")
+        for opp in (ai_result.get("opportunities") or []):
+            send_opportunity_alert(opp)
 
         # Buscar el meta-JSON más reciente para la fase 4.5
         import glob as _glob
@@ -283,6 +288,13 @@ def run_pipeline(
         phase_gtm()
     else:
         print("\n  GTM agent omitido (--skip-gtm).")
+
+    send_run_summary(
+        posts_analyzed=ai_result.get("posts_analyzed", 0),
+        opportunities_count=len(ai_result.get("opportunities") or []),
+        duration_sec=int(time.time() - t_total),
+        mode=mode,
+    )
 
     print(f"\n  Pipeline finalizado -- total {_fmt(time.time() - t_total)}")
 

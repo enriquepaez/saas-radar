@@ -65,6 +65,7 @@ def test_skip_all_flags_no_exception(tmp_path, capsys):
         patch("saas_radar.main.init_db") as mock_init,
         patch("saas_radar.main.has_successful_run", return_value=False),
         patch("saas_radar.main.save_to_db"),
+        patch("saas_radar.main.send_run_summary"),
     ):
         from saas_radar.main import run_pipeline
 
@@ -85,6 +86,7 @@ def test_incremental_mode_when_previous_run_exists(capsys):
         patch("saas_radar.main.init_db"),
         patch("saas_radar.main.has_successful_run", return_value=True),
         patch("saas_radar.main.save_to_db"),
+        patch("saas_radar.main.send_run_summary"),
     ):
         from saas_radar.main import run_pipeline
 
@@ -102,6 +104,7 @@ def test_full_load_mode_when_no_previous_run(capsys):
         patch("saas_radar.main.init_db"),
         patch("saas_radar.main.has_successful_run", return_value=False),
         patch("saas_radar.main.save_to_db"),
+        patch("saas_radar.main.send_run_summary"),
     ):
         from saas_radar.main import run_pipeline
 
@@ -119,6 +122,7 @@ def test_full_scan_flag_forces_full_load(capsys):
         patch("saas_radar.main.init_db"),
         patch("saas_radar.main.has_successful_run", return_value=True),
         patch("saas_radar.main.save_to_db"),
+        patch("saas_radar.main.send_run_summary"),
     ):
         from saas_radar.main import run_pipeline
 
@@ -134,6 +138,7 @@ def test_full_scan_flag_forces_full_load(capsys):
 
 def test_e2e_full_pipeline_with_mocks(tmp_path):
     posts_df = _make_posts_df(3)
+    ai_return = {"status": "partial", "opportunities": [], "disqualified": [], "top_3": [], "run_id": 1, "json_path": None, "posts_analyzed": 3}
 
     with (
         patch("saas_radar.main.init_db"),
@@ -143,7 +148,9 @@ def test_e2e_full_pipeline_with_mocks(tmp_path):
         patch("saas_radar.main.fetch_top_comments", return_value=[]),
         patch("saas_radar.main.save_to_db"),
         patch("saas_radar.main.db_stats", return_value={"reddit_posts": 3, "reddit_comments": 0}),
-        patch("saas_radar.main.run_ai_analysis", return_value=None),
+        patch("saas_radar.main.run_ai_analysis", return_value=ai_return),
+        patch("saas_radar.main.send_opportunity_alert"),
+        patch("saas_radar.main.send_run_summary"),
     ):
         from saas_radar.main import run_pipeline
 
@@ -231,3 +238,116 @@ def test_enrich_posts_adds_required_columns():
     assert "category" in result.columns
     assert "semantic_score" in result.columns
     assert len(result) == 2
+
+
+# ── Tests Telegram pipeline integration ───────────────────────────────────────
+
+# ── Test 11: send_opportunity_alert se llama N veces según las oportunidades ──
+
+
+def test_send_opportunity_alert_called_n_times():
+    """send_opportunity_alert se invoca una vez por cada oportunidad devuelta por run_ai_analysis."""
+    opps = [
+        {"product_name": "App A", "priority_score": 9},
+        {"product_name": "App B", "priority_score": 8},
+        {"product_name": "App C", "priority_score": 7},
+    ]
+    ai_return = {
+        "status": "ok",
+        "opportunities": opps,
+        "disqualified": [],
+        "top_3": [],
+        "run_id": 1,
+        "json_path": None,
+        "posts_analyzed": 10,
+    }
+
+    with (
+        patch("saas_radar.main.init_db"),
+        patch("saas_radar.main.has_successful_run", return_value=False),
+        patch("saas_radar.main.run_ai_analysis", return_value=ai_return),
+        patch("saas_radar.main.send_opportunity_alert") as mock_alert,
+        patch("saas_radar.main.send_run_summary"),
+    ):
+        from saas_radar.main import run_pipeline
+
+        run_pipeline(skip_scrape=True, skip_gtm=True)
+
+    assert mock_alert.call_count == 3
+
+
+# ── Test 12: send_opportunity_alert NO se llama con skip_ai=True ──────────────
+
+
+def test_send_opportunity_alert_not_called_when_skip_ai():
+    """Cuando skip_ai=True no se ejecuta run_ai_analysis y por tanto no hay alertas."""
+    with (
+        patch("saas_radar.main.init_db"),
+        patch("saas_radar.main.has_successful_run", return_value=False),
+        patch("saas_radar.main.send_opportunity_alert") as mock_alert,
+        patch("saas_radar.main.send_run_summary"),
+    ):
+        from saas_radar.main import run_pipeline
+
+        run_pipeline(skip_scrape=True, skip_ai=True, skip_gtm=True)
+
+    mock_alert.assert_not_called()
+
+
+# ── Test 13: send_run_summary se llama siempre (con y sin skip_ai) ────────────
+
+
+@pytest.mark.parametrize("skip_ai", [False, True])
+def test_send_run_summary_always_called(skip_ai):
+    """send_run_summary se invoca al final del pipeline independientemente de skip_ai."""
+    ai_return = {
+        "status": "partial",
+        "opportunities": [],
+        "disqualified": [],
+        "top_3": [],
+        "run_id": 1,
+        "json_path": None,
+        "posts_analyzed": 5,
+    }
+
+    with (
+        patch("saas_radar.main.init_db"),
+        patch("saas_radar.main.has_successful_run", return_value=False),
+        patch("saas_radar.main.run_ai_analysis", return_value=ai_return),
+        patch("saas_radar.main.send_opportunity_alert"),
+        patch("saas_radar.main.send_run_summary") as mock_summary,
+    ):
+        from saas_radar.main import run_pipeline
+
+        run_pipeline(skip_scrape=True, skip_ai=skip_ai, skip_gtm=True)
+
+    mock_summary.assert_called_once()
+
+
+# ── Test 14: send_run_summary recibe mode correcto según has_successful_run ───
+
+
+@pytest.mark.parametrize(
+    "has_run,full_scan,expected_mode",
+    [
+        (True, False, "INCREMENTAL"),
+        (False, False, "CARGA COMPLETA"),
+        (True, True, "CARGA COMPLETA"),
+    ],
+)
+def test_send_run_summary_receives_correct_mode(has_run, full_scan, expected_mode):
+    """send_run_summary recibe mode='INCREMENTAL' o 'CARGA COMPLETA' según corresponde."""
+    with (
+        patch("saas_radar.main.init_db"),
+        patch("saas_radar.main.has_successful_run", return_value=has_run),
+        patch("saas_radar.main.send_opportunity_alert"),
+        patch("saas_radar.main.send_run_summary") as mock_summary,
+    ):
+        from saas_radar.main import run_pipeline
+
+        run_pipeline(skip_scrape=True, skip_ai=True, skip_gtm=True, full_scan=full_scan)
+
+    call_kwargs = mock_summary.call_args
+    assert call_kwargs is not None
+    # send_run_summary se llama con keyword args
+    assert call_kwargs.kwargs.get("mode") == expected_mode
