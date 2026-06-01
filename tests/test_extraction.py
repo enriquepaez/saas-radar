@@ -443,3 +443,101 @@ def test_extract_problems_batch_passes_provider():
 
     _, kwargs = mock_llm.call_args
     assert kwargs.get("provider") == "gemini"
+
+
+# ── Serialización JSON con numpy.int64 ────────────────────────────────────────
+
+
+def test_extract_problem_from_post_json_serializable_with_numpy_int64():
+    """_score y _num_comments se convierten a int nativo: json.dumps no falla con numpy.int64."""
+    import json
+    import numpy as np
+
+    llm_response = {
+        "has_problem": True,
+        "who_has_it": "accountant",
+        "problem_description": "invoicing pain",
+        "workflow_context": "month-end",
+        "current_workaround": "Excel",
+        "payment_signal": False,
+        "payment_quote": "",
+        "competitor_mentions": [],
+        "key_quote": "takes forever",
+    }
+    row = _make_row(score=np.int64(55), num_comments=np.int64(7))
+    with patch("saas_radar.analysis.extraction.call_llm", return_value=llm_response):
+        result = extract_problem_from_post(row, [])
+
+    assert result["_score"] == 55
+    assert result["_num_comments"] == 7
+    # El resultado debe ser serializable sin TypeError
+    serialized = json.dumps(result)
+    parsed = json.loads(serialized)
+    assert parsed["_score"] == 55
+    assert parsed["_num_comments"] == 7
+
+
+def test_extract_problem_deep_json_serializable_with_numpy_int64():
+    """extract_problem_deep convierte numpy.int64 a int nativo para evitar TypeError en json.dumps."""
+    import json
+    import numpy as np
+
+    llm_response = {
+        "has_problem": True,
+        "who_has_it": "solo bookkeeper",
+        "problem_description": "reconciliation pain",
+        "workflow_context": "monthly close",
+        "current_workaround": "Excel",
+        "payment_signal": False,
+        "payment_quote": "",
+        "competitor_mentions": [],
+        "key_quote": "takes hours",
+        "comment_signals": "",
+        "estimated_frequency": "monthly",
+        "tam_clues": "",
+    }
+    row = _make_row(id="np_deep", score=np.int64(100), num_comments=np.int64(25))
+    with patch("saas_radar.analysis.extraction._fetch_comments_for_post", return_value=[]):
+        with patch("saas_radar.analysis.extraction.call_llm", return_value=llm_response):
+            result = extract_problem_deep(row)
+
+    assert result["_score"] == 100
+    assert result["_num_comments"] == 25
+    serialized = json.dumps(result)
+    parsed = json.loads(serialized)
+    assert parsed["_score"] == 100
+    assert parsed["_num_comments"] == 25
+
+
+def test_extract_problems_batch_json_serializable_with_numpy_int64():
+    """extract_problems_batch convierte numpy.int64 a int nativo para evitar TypeError en json.dumps."""
+    import json
+    import numpy as np
+
+    llm_response = {
+        "results": [
+            {
+                "post_index": 1,
+                "has_problem": True,
+                "who_has_it": "bookkeeper",
+                "problem_description": "invoicing pain",
+                "workflow_context": "invoicing",
+                "current_workaround": "spreadsheets",
+                "payment_signal": False,
+                "payment_quote": "",
+                "competitor_mentions": [],
+                "key_quote": "takes forever",
+            }
+        ]
+    }
+    rows = [_make_row(score=np.int64(77), num_comments=np.int64(3))]
+    with patch("saas_radar.analysis.extraction.call_llm", return_value=llm_response):
+        results = extract_problems_batch(rows)
+
+    assert len(results) == 1
+    assert results[0]["_score"] == 77
+    assert results[0]["_num_comments"] == 3
+    serialized = json.dumps(results[0])
+    parsed = json.loads(serialized)
+    assert parsed["_score"] == 77
+    assert parsed["_num_comments"] == 3

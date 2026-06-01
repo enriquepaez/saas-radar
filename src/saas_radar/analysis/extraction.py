@@ -268,8 +268,8 @@ def extract_problem_from_post(row: pd.Series, comments: list[str], provider: str
 
     result["_post_id"] = row.get("id", "")
     result["_subreddit"] = sub
-    result["_score"] = row.get("score", 0)
-    result["_num_comments"] = row.get("num_comments", 0)
+    result["_score"] = int(row.get("score", 0))
+    result["_num_comments"] = int(row.get("num_comments", 0))
     result["_url"] = row.get("url", "")
     result["_title"] = title
     return result
@@ -315,8 +315,8 @@ def extract_problem_deep(row: pd.Series, provider: str = "claude") -> dict[str, 
 
     result["_post_id"] = post_id
     result["_subreddit"] = sub
-    result["_score"] = row.get("score", 0)
-    result["_num_comments"] = row.get("num_comments", 0)
+    result["_score"] = int(row.get("score", 0))
+    result["_num_comments"] = int(row.get("num_comments", 0))
     result["_url"] = row.get("url", "")
     result["_title"] = title
     result["_deep"] = True
@@ -365,8 +365,8 @@ def extract_problems_batch(rows: list[pd.Series], provider: str = "claude") -> l
         ex = items[i] if i < len(items) else {"has_problem": False}
         ex["_post_id"] = row.get("id", "")
         ex["_subreddit"] = row.get("subreddit", "")
-        ex["_score"] = row.get("score", 0)
-        ex["_num_comments"] = row.get("num_comments", 0)
+        ex["_score"] = int(row.get("score", 0))
+        ex["_num_comments"] = int(row.get("num_comments", 0))
         ex["_url"] = row.get("url", "")
         ex["_title"] = str(row.get("title", ""))
         extractions.append(ex)
