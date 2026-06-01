@@ -3,23 +3,19 @@
 > Este archivo se vacía al cerrar cada sesión y se mueve a `history.md`.
 > Mientras trabajas, **mantenlo actualizado en tiempo real**, no al final.
 
-- **Feature en curso:** split_extraction_provider — Provider separado para extracción vs síntesis
-- **Inicio:** 2026-05-31
-- **Agente:** implementer
+- **Fix en curso:** fix/numpy-int64-json-serialization
+- **Inicio:** 2026-06-01
+- **Agente:** leader (implementación directa — fix quirúrgico de 3 líneas + 3 tests)
+- **Estado:** implementado, tests verdes, pendiente de reviewer
 
 ## Plan
 
-- Añadir `EXTRACTION_PROVIDER` en `config.py` justo después de `AI_PROVIDER`.
-- En `ai_analyzer.py` cambiar las llamadas de extracción para usar `config.EXTRACTION_PROVIDER` en lugar del `provider` original.
-- Añadir `EXTRACTION_PROVIDER` al bloque `env:` de `.github/workflows/pipeline.yml`.
-- Añadir test en `tests/test_ai_analyzer.py` que verifica que la extracción usa `config.EXTRACTION_PROVIDER` aunque `AI_PROVIDER` sea distinto.
-- Ejecutar `./init.sh` y verificar que todo está verde.
+- Envolver `row.get("score", 0)` y `row.get("num_comments", 0)` en `int()` en las 3 funciones de extraction.py
+- Añadir 3 tests con `numpy.int64` explícito para cubrir la regresión
+- Verificar con pytest
 
 ## Bitácora
 
-- Leyendo archivos de contexto: AGENTS.md, feature_list.json, config.py, ai_analyzer.py, pipeline.yml, tests.
-- Implementando cambios.
-
-## Próximo paso
-
-Implementar los 4 cambios en orden.
+- 3 cambios aplicados en `src/saas_radar/analysis/extraction.py` (líneas 271-272, 318-319, 368-369)
+- 3 tests nuevos añadidos en `tests/test_extraction.py`
+- `22 passed in 0.40s`
