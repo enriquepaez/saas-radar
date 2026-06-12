@@ -322,3 +322,21 @@ Suite completa pasa (exit code 0). Reviewer aprobó todos los acceptance criteri
   - `tests/fixtures/tuner_report_expected.txt` — snapshot actualizado con nuevos tipos de propuesta.
 - **Verificación:** suite completa → exit code 0. Reviewer aprobó todos los acceptance criteria.
 - **Cierre:** Feature #21 marcada `done`. Milestone M4_operacion_avanzada completado. Todas las features del proyecto done.
+
+---
+
+## Sesión 2026-06-12 — Feature #22 `pipeline_persistence_restoration`
+
+- **Contexto:** auditoría del estado del scraping post-MVP. Diagnosticadas dos regresiones críticas:
+  1. Commit `8409bb9 fix(#16)` quitó el push a la rama `data` y lo reemplazó por `actions/cache`. Como `tuner.yml` sigue leyendo de `data`, el tuner operaba contra una BD congelada del 30-may; los `meta_recommendations` no se actualizaban; A4 no abría PRs.
+  2. 2 runs failed del 30-may con Gemini ('0 extracciones válidas') por respuesta sin clave `results`. Logging insuficiente.
+- **Subagentes:** 2 Explore en paralelo (audit_gemini_fail, audit_cron_state) + 1 implementer + 1 reviewer.
+- **Cambios:**
+  - `.github/workflows/pipeline.yml` — dual checkout main+data, `permissions.contents: write`, step "Persist to data branch" con copia + commit/push condicional, mantiene `actions/cache` + `upload-artifact`.
+  - `feature_list.json` — añadido milestone `M5_post_mvp_refinement` con 4 features nuevas (#22-25). F22 cerrada `done`; F23 (`extraction_gemini_hardening`), F24 (`signal_tuning_apply_findings`), F25 (`dedup_v2_embeddings`) quedan `pending`.
+  - `progress/audit_gemini_fail.md` — diagnóstico fail Gemini.
+  - `progress/audit_cron_state.md` — diagnóstico cron + regresión 8409bb9.
+  - `progress/impl_pipeline_persistence_restoration.md` — implementación + sync local (`git fetch origin data && git checkout origin/data -- data/saas.db data/runs/`).
+  - `progress/review_pipeline_persistence_restoration.md` — APPROVED.
+- **Verificación:** YAML válido (`yaml.safe_load`). No hay tests automatizados para workflows; verificación final en runtime tras mergear y observar `origin/data`.
+- **Cierre:** F22 marcada `done`. F23-25 quedan en backlog para próximas sesiones.
