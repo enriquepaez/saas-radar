@@ -44,6 +44,13 @@ AI_PROVIDER = (os.getenv("AI_PROVIDER") or "claude").lower()
 # La síntesis sigue usando AI_PROVIDER.
 EXTRACTION_PROVIDER = (os.getenv("EXTRACTION_PROVIDER") or "groq").lower()
 
+# Provider de respaldo cuando la extracción con EXTRACTION_PROVIDER dispara el
+# circuit breaker (3 batches consecutivos sin resultado válido). Default "groq"
+# porque es el más estable en free tier y rara vez devuelve schemas malformados.
+# String vacío → desactiva el fallback (la extracción aborta como antes de F23).
+# El fallback se activa una sola vez por run: si también falla, se aborta.
+EXTRACTION_PROVIDER_FALLBACK = (os.getenv("EXTRACTION_PROVIDER_FALLBACK") or "groq").lower()
+
 # Claude (Anthropic)
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 CLAUDE_EXTRACTION_MODEL = os.getenv("CLAUDE_EXTRACTION_MODEL", "claude-haiku-4-5-20251001")

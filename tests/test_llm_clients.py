@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from unittest.mock import patch
 
 import httpx
@@ -291,3 +292,87 @@ def test_call_llm_unknown_provider_returns_none():
     """Provider desconocido devuelve None sin lanzar excepción."""
     result = call_llm("prompt", provider="unknown_provider", max_retries=1)
     assert result is None
+
+
+# ── Hardening Gemini (feature #23) ───────────────────────────────────────────
+
+
+@respx.mock
+def test_call_gemini_envelope_without_candidates_logs_warning_and_returns_none(caplog):
+    """200 OK pero JSON sin 'candidates' → WARNING + None (no crash)."""
+    malformed_body = {"foo": "bar"}
+    respx.post(url__startswith="https://generativelanguage.googleapis.com").mock(
+        return_value=httpx.Response(200, json=malformed_body)
+    )
+    with patch.object(config, "GEMINI_API_KEY", "test-key"):
+        with caplog.at_level(logging.WARNING, logger="saas_radar.analysis.llm_clients"):
+            result = call_gemini("prompt", max_retries=1)
+    assert result is None
+    assert any("sin candidates" in rec.message for rec in caplog.records), caplog.text
+    # El warning incluye el body truncado para debug post-mortem.
+    assert any("body[:500]" in rec.message for rec in caplog.records), caplog.text
+
+
+@respx.mock
+def test_call_gemini_envelope_with_text_unparseable_logs_warning_and_returns_none(caplog):
+    """200 OK con text que NO es JSON parseable → WARNING + None."""
+    body = {
+        "candidates": [
+            {"content": {"parts": [{"text": "esto no es json en absoluto"}]}, "finishReason": "STOP"}
+        ]
+    }
+    respx.post(url__startswith="https://generativelanguage.googleapis.com").mock(
+        return_value=httpx.Response(200, json=body)
+    )
+    with patch.object(config, "GEMINI_API_KEY", "test-key"):
+        with caplog.at_level(logging.WARNING, logger="saas_radar.analysis.llm_clients"):
+            result = call_gemini("prompt", max_retries=1)
+    assert result is None
+    assert any("no parseable como JSON" in rec.message for rec in caplog.records), caplog.text
+
+
+@respx.mock
+def test_call_gemini_envelope_valid_text_without_results_key_returns_parsed_dict():
+    """200 OK con envelope válido y text JSON parseable ('{"foo":"bar"}') → devuelve el dict.
+
+    Decisión documentada en progress/impl_extraction_gemini_hardening.md:
+    call_gemini valida sólo la estructura del envelope Gemini (candidates →
+    content → parts → text). La validación de la shape del prompt
+    (presencia de 'results' por ejemplo) vive en el caller
+    (extract_problems_batch), porque depende del prompt y no del transporte.
+    Aquí verificamos que el envelope se acepta y que el dict parseado se
+    devuelve tal cual, aunque no tenga 'results'. El test paralelo en
+    test_extraction.py:test_extract_problems_batch_logs_warning_when_results_key_missing
+    verifica que el caller loguea WARNING.
+    """
+    body = {
+        "candidates": [
+            {"content": {"parts": [{"text": '{"foo": "bar"}'}]}, "finishReason": "STOP"}
+        ]
+    }
+    respx.post(url__startswith="https://generativelanguage.googleapis.com").mock(
+        return_value=httpx.Response(200, json=body)
+    )
+    with patch.object(config, "GEMINI_API_KEY", "test-key"):
+        result = call_gemini("prompt", max_retries=1)
+    assert result == {"foo": "bar"}
+
+
+@respx.mock
+def test_call_gemini_envelope_with_empty_parts_logs_warning(caplog):
+    """200 OK con candidates[0].content.parts vacío → WARNING + None."""
+    body = {
+        "candidates": [
+            {"content": {"parts": []}, "finishReason": "MAX_TOKENS"}
+        ]
+    }
+    respx.post(url__startswith="https://generativelanguage.googleapis.com").mock(
+        return_value=httpx.Response(200, json=body)
+    )
+    with patch.object(config, "GEMINI_API_KEY", "test-key"):
+        with caplog.at_level(logging.WARNING, logger="saas_radar.analysis.llm_clients"):
+            result = call_gemini("prompt", max_retries=1)
+    assert result is None
+    assert any("sin parts" in rec.message for rec in caplog.records), caplog.text
+    # finishReason se incluye para diagnóstico.
+    assert any("MAX_TOKENS" in rec.message for rec in caplog.records), caplog.text

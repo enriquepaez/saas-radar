@@ -7,6 +7,7 @@ from typing import Any
 import pandas as pd
 from sqlalchemy import text as sql_text
 
+from saas_radar import config
 from saas_radar.analysis.llm_clients import call_llm
 from saas_radar.config import TEXT_SNIPPET_LEN
 from saas_radar.storage.db import engine
@@ -340,8 +341,21 @@ def extract_problems_batch(rows: list[pd.Series], provider: str = "claude") -> l
 
     result = call_llm(prompt, max_tokens=220 * len(rows), phase="extraction", provider=provider)
     if not result or "results" not in result:
-        reason = "respuesta None (API fallo)" if result is None else f"sin clave 'results': {str(result)[:200]}"
-        logger.warning("Batch fallo -- %s", reason)
+        # Logging defensivo (feature #23): truncar a 500 chars la repr del resultado
+        # para que el debug post-mortem de un schema malformado del LLM no
+        # quede ciego (ver progress/audit_gemini_fail.md). Diferenciar entre
+        # None (API fallo) y dict sin clave 'results' (schema malformado).
+        if result is None:
+            logger.warning(
+                "Batch fallo con provider=%s -- call_llm devolvió None (API fallo o schema malformado)",
+                provider,
+            )
+        else:
+            logger.warning(
+                "Batch fallo con provider=%s -- result sin clave 'results'. repr[:500]=%s",
+                provider,
+                repr(result)[:500],
+            )
         return [
             {
                 "has_problem": False,
@@ -376,10 +390,22 @@ def extract_problems_batch(rows: list[pd.Series], provider: str = "claude") -> l
 # ── Circuit breaker ───────────────────────────────────────────────────────────
 
 
-def run_batch_extraction(posts: list[pd.Series], batch_size: int = EXTRACTION_BATCH_SIZE, provider: str = "claude") -> list[dict[str, Any]]:
-    """Procesa posts en batches con circuit breaker tras errores consecutivos."""
+def _run_batches_with_circuit_breaker(
+    posts: list[pd.Series],
+    batch_size: int,
+    provider: str,
+) -> tuple[list[dict[str, Any]], bool]:
+    """Loop interno: ejecuta los batches con circuit breaker.
+
+    Devuelve (resultados_acumulados, circuit_breaker_triggered).
+    `circuit_breaker_triggered` es True si se abortó por superar
+    CIRCUIT_BREAKER_THRESHOLD batches consecutivos con todos los items en
+    `_error=True`. Esta separación permite al caller decidir si reintentar
+    con un provider de respaldo (feature #23, EXTRACTION_PROVIDER_FALLBACK).
+    """
     results: list[dict[str, Any]] = []
     consecutive_errors = 0
+    triggered = False
 
     for start in range(0, len(posts), batch_size):
         batch = posts[start : start + batch_size]
@@ -393,12 +419,65 @@ def run_batch_extraction(posts: list[pd.Series], batch_size: int = EXTRACTION_BA
 
         if consecutive_errors >= CIRCUIT_BREAKER_THRESHOLD:
             logger.error(
-                "Circuit breaker disparado tras %d batches consecutivos con error — abortando extraccion",
+                "Circuit breaker disparado tras %d batches consecutivos con error (provider=%s) — abortando loop",
                 consecutive_errors,
+                provider,
             )
+            triggered = True
             break
 
-    return results
+    return results, triggered
+
+
+def run_batch_extraction(
+    posts: list[pd.Series],
+    batch_size: int = EXTRACTION_BATCH_SIZE,
+    provider: str = "claude",
+) -> list[dict[str, Any]]:
+    """Procesa posts en batches con circuit breaker tras errores consecutivos.
+
+    Fallback automático (feature #23): si el circuit breaker dispara con un
+    provider != EXTRACTION_PROVIDER_FALLBACK (y el fallback no está vacío),
+    reintenta TODOS los batches desde 0 con el provider de respaldo UNA sola
+    vez. El primer pase queda como log de auditoría; los resultados del
+    segundo pase reemplazan a los del primero porque la unidad de retry es
+    "todos los batches desde 0" (más simple y robusto que mantener un mapa
+    parcial de batches procesados → recuperar solo huérfanos).
+    """
+    results, triggered = _run_batches_with_circuit_breaker(posts, batch_size, provider)
+
+    if not triggered:
+        return results
+
+    fallback = (config.EXTRACTION_PROVIDER_FALLBACK or "").strip().lower()
+    if not fallback or fallback == provider:
+        # Sin fallback configurado o ya estamos en el provider de respaldo.
+        return results
+
+    logger.warning(
+        "Fallback activado: provider=%s disparó circuit breaker. Reintentando los %d posts con provider=%s (UNA sola vez).",
+        provider,
+        len(posts),
+        fallback,
+    )
+    fallback_results, fallback_triggered = _run_batches_with_circuit_breaker(
+        posts, batch_size, fallback
+    )
+
+    if fallback_triggered:
+        logger.error(
+            "Fallback con provider=%s también disparó circuit breaker — abortando extracción",
+            fallback,
+        )
+        # Aun así devolvemos lo que dio el fallback: puede haber resultados
+        # parciales útiles antes del corte (ej. 2 batches buenos + 3 _error).
+    else:
+        logger.info(
+            "Fallback con provider=%s completó la extracción tras circuit breaker del provider original",
+            fallback,
+        )
+
+    return fallback_results
 
 
 def extract_problems(posts: list[pd.Series], provider: str = "claude") -> list[dict[str, Any]]:
