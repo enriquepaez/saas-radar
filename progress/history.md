@@ -340,3 +340,18 @@ Suite completa pasa (exit code 0). Reviewer aprobó todos los acceptance criteri
   - `progress/review_pipeline_persistence_restoration.md` — APPROVED.
 - **Verificación:** YAML válido (`yaml.safe_load`). No hay tests automatizados para workflows; verificación final en runtime tras mergear y observar `origin/data`.
 - **Cierre:** F22 marcada `done`. F23-25 quedan en backlog para próximas sesiones.
+
+---
+
+## Sesión 2026-06-12 — Feature #23 `extraction_gemini_hardening`
+
+- **Rama:** `feat/23-extraction_gemini_hardening`
+- **Subagentes:** implementer + reviewer
+- **Archivos modificados:**
+  - `src/saas_radar/analysis/llm_clients.py` — `call_gemini` valida shape del envelope antes de devolver al caller; si `candidates[0].content.parts[0].text` no existe, loguea WARNING con `body[:500]` truncado y devuelve None.
+  - `src/saas_radar/analysis/extraction.py` — `extract_problems_batch` loguea WARNING cuando `call_llm` devuelve None o cuando `results` no está en el resultado. `run_batch_extraction` implementa fallback a groq: cuando el circuit breaker dispara con `provider != fallback`, reintenta todos los batches una sola vez con `EXTRACTION_PROVIDER_FALLBACK`.
+  - `src/saas_radar/config.py` — nueva variable `EXTRACTION_PROVIDER_FALLBACK` (default `"groq"`, sobreescribible por env var).
+  - `tests/test_llm_clients.py` — test caplog: mock 200 OK con shape inesperada → WARNING + None.
+  - `tests/test_extraction.py` — test fallback: mock `call_llm` devuelve None para gemini, dict válido para groq → fallback activa, `valid_extractions > 0`.
+- **Verificación:** suite completa (422 tests, exit code 0). Reviewer aprobó todos los acceptance criteria A1-A7.
+- **Cierre:** F23 marcada `done`. Desbloquea: #24 `signal_tuning_apply_findings`.

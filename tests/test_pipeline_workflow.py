@@ -105,15 +105,17 @@ def test_artifact_retention_days(workflow: dict):
     assert retention == 30, f"retention-days debe ser 30, es: {retention}"
 
 
-def test_no_data_branch_checkout(workflow: dict):
-    """No existe ningún step con ref: data (ya no usamos rama data)."""
+def test_has_data_branch_checkout(workflow: dict):
+    """Existe un step de checkout con ref: data y path: persist (F22 persistencia)."""
     steps = workflow["jobs"]["run"]["steps"]
     data_checkouts = [
         s for s in steps
-        if s.get("with", {}).get("ref") == "data"
+        if s.get("uses", "").startswith("actions/checkout")
+        and s.get("with", {}).get("ref") == "data"
+        and s.get("with", {}).get("path") == "persist"
     ]
-    assert len(data_checkouts) == 0, (
-        f"No debe haber checkout con ref='data', encontrados: {data_checkouts}"
+    assert len(data_checkouts) >= 1, (
+        "Falta checkout de la rama 'data' con path 'persist' (necesario para F22)"
     )
 
 
@@ -162,12 +164,24 @@ def test_run_pipeline_step_handles_full_scan(workflow: dict):
     )
 
 
-def test_permissions_contents_read(workflow: dict):
-    """permissions.contents debe ser 'read' (ya no hacemos push)."""
+def test_permissions_contents_write(workflow: dict):
+    """permissions.contents debe ser 'write' (F22 persiste a rama data via push)."""
     permissions = workflow.get("permissions")
     assert permissions is not None, "Falta bloque 'permissions'"
-    assert permissions.get("contents") == "read", (
-        f"permissions.contents debe ser 'read', es: {permissions.get('contents')}"
+    assert permissions.get("contents") == "write", (
+        f"permissions.contents debe ser 'write', es: {permissions.get('contents')}"
+    )
+
+
+def test_has_persist_step(workflow: dict):
+    """Existe un step cuyo name contiene 'Persist' (regresión-guard para F22)."""
+    steps = workflow["jobs"]["run"]["steps"]
+    persist_steps = [
+        s for s in steps
+        if "persist" in s.get("name", "").lower()
+    ]
+    assert len(persist_steps) >= 1, (
+        "Falta step con 'Persist' en el name (paso de persistencia a rama data)"
     )
 
 

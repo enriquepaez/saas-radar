@@ -176,18 +176,36 @@ def call_gemini(
                 return None
 
             data = response.json()
-            # Estructura de respuesta: candidates[0].content.parts[0].text
+            # Estructura de respuesta: candidates[0].content.parts[0].text.
+            # Validación defensiva: Gemini con responseMimeType=application/json
+            # puede devolver 200 OK con un envelope incompleto (sin candidates,
+            # con finishReason!=STOP, o con text vacío). Loguear el body
+            # truncado a 500 chars antes de devolver None facilita el debug
+            # post-mortem documentado en progress/audit_gemini_fail.md.
+            body_preview = response.text[:500]
             candidates = data.get("candidates") or []
             if not candidates:
-                logger.error("Gemini sin candidates: %s", str(data)[:300])
+                logger.warning("Gemini sin candidates en la respuesta. body[:500]=%s", body_preview)
                 return None
             parts = candidates[0].get("content", {}).get("parts") or []
             if not parts:
                 finish = candidates[0].get("finishReason", "?")
-                logger.error("Gemini sin parts (finishReason=%s)", finish)
+                logger.warning(
+                    "Gemini sin parts (finishReason=%s). body[:500]=%s",
+                    finish,
+                    body_preview,
+                )
                 return None
             raw_text = parts[0].get("text", "").strip()
-            return _parse_json_payload(raw_text)
+            if not raw_text:
+                logger.warning("Gemini devolvió text vacío. body[:500]=%s", body_preview)
+                return None
+
+            parsed = _parse_json_payload(raw_text)
+            if parsed is None:
+                logger.warning("Gemini text no parseable como JSON. text[:500]=%s", raw_text[:500])
+                return None
+            return parsed
 
         except (KeyError, IndexError) as e:
             logger.error("Gemini respuesta inesperada: %s", e)

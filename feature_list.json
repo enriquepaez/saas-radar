@@ -434,7 +434,7 @@
         "Documentación de la variable nueva EXTRACTION_PROVIDER_FALLBACK en config.py con docstring"
       ],
       "depends_on": [9, 22],
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 24,

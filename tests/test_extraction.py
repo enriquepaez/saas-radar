@@ -1,10 +1,12 @@
 """Tests para src/saas_radar/analysis/extraction.py."""
 from __future__ import annotations
 
+import logging
 from unittest.mock import patch
 
 import pandas as pd
 
+from saas_radar import config
 from saas_radar.analysis.extraction import (
     CIRCUIT_BREAKER_THRESHOLD,
     _clean_extractions,
@@ -541,3 +543,130 @@ def test_extract_problems_batch_json_serializable_with_numpy_int64():
     parsed = json.loads(serialized)
     assert parsed["_score"] == 77
     assert parsed["_num_comments"] == 3
+
+
+# ── Hardening (feature #23): logging defensivo + fallback de provider ─────────
+
+
+def test_extract_problems_batch_logs_warning_when_call_llm_none(caplog):
+    """call_llm devuelve None → WARNING con el provider y todos los items _error=True."""
+    rows = [_make_row(id="p1"), _make_row(id="p2")]
+    with patch("saas_radar.analysis.extraction.call_llm", return_value=None):
+        with caplog.at_level(logging.WARNING, logger="saas_radar.analysis.extraction"):
+            results = extract_problems_batch(rows, provider="gemini")
+
+    assert len(results) == 2
+    assert all(r.get("_error") is True for r in results)
+    assert any("provider=gemini" in rec.message for rec in caplog.records), caplog.text
+    assert any("call_llm devolvió None" in rec.message for rec in caplog.records), caplog.text
+
+
+def test_extract_problems_batch_logs_warning_when_results_key_missing(caplog):
+    """call_llm devuelve dict válido pero SIN 'results' → WARNING con repr truncada + items _error=True."""
+    malformed = {"foo": "bar", "baz": [1, 2, 3]}
+    rows = [_make_row(id="p1"), _make_row(id="p2")]
+    with patch("saas_radar.analysis.extraction.call_llm", return_value=malformed):
+        with caplog.at_level(logging.WARNING, logger="saas_radar.analysis.extraction"):
+            results = extract_problems_batch(rows, provider="gemini")
+
+    assert len(results) == 2
+    assert all(r.get("_error") is True for r in results)
+    assert any("sin clave 'results'" in rec.message for rec in caplog.records), caplog.text
+    # La repr del dict aparece truncada en el log para debug post-mortem.
+    assert any("'foo'" in rec.message and "'bar'" in rec.message for rec in caplog.records), caplog.text
+
+
+def test_run_batch_extraction_fallback_activates_when_circuit_breaker_fires_with_non_groq_provider(monkeypatch):
+    """Fallback (gemini → groq): 3 batches de gemini devuelven None y disparan circuit breaker;
+    el fallback con groq devuelve dict válido y produce extracciones válidas.
+
+    El test verifica el caso exacto del audit del 30-may: provider="gemini" cae en circuit
+    breaker, EXTRACTION_PROVIDER_FALLBACK="groq" → la función reintenta TODOS los posts con groq
+    y devuelve resultados con _error=False y has_problem=True.
+    """
+    monkeypatch.setattr(config, "EXTRACTION_PROVIDER_FALLBACK", "groq")
+    posts = [_make_row(id=f"p{i}") for i in range(15)]  # 3 batches de 5
+
+    valid_llm_response = {
+        "results": [
+            {
+                "post_index": i + 1,
+                "has_problem": True,
+                "who_has_it": "freelance bookkeeper",
+                "problem_description": "invoicing pain",
+                "workflow_context": "monthly invoicing",
+                "current_workaround": "spreadsheets",
+                "payment_signal": False,
+                "payment_quote": "",
+                "competitor_mentions": [],
+                "key_quote": "takes forever",
+            }
+            for i in range(5)
+        ]
+    }
+
+    def fake_call_llm(prompt, *, provider, **kwargs):  # noqa: ARG001
+        if provider == "gemini":
+            return None
+        if provider == "groq":
+            return valid_llm_response
+        raise AssertionError(f"provider inesperado: {provider}")
+
+    with patch("saas_radar.analysis.extraction.call_llm", side_effect=fake_call_llm):
+        results = run_batch_extraction(posts, batch_size=5, provider="gemini")
+
+    valid_extractions = [r for r in results if not r.get("_error") and r.get("has_problem")]
+    # 15 posts → 3 batches con 5 resultados válidos cada uno tras el fallback.
+    assert len(valid_extractions) > 0, f"valid_extractions debe ser > 0 tras fallback. results={results}"
+    assert len(valid_extractions) == 15
+
+
+def test_run_batch_extraction_fallback_disabled_when_env_empty(monkeypatch):
+    """EXTRACTION_PROVIDER_FALLBACK='' desactiva el fallback: circuit breaker aborta como antes."""
+    monkeypatch.setattr(config, "EXTRACTION_PROVIDER_FALLBACK", "")
+    posts = [_make_row(id=f"p{i}") for i in range(15)]
+
+    call_counts = {"gemini": 0, "groq": 0}
+
+    def fake_call_llm(prompt, *, provider, **kwargs):  # noqa: ARG001
+        call_counts[provider] = call_counts.get(provider, 0) + 1
+        return None
+
+    with patch("saas_radar.analysis.extraction.call_llm", side_effect=fake_call_llm):
+        results = run_batch_extraction(posts, batch_size=5, provider="gemini")
+
+    # Solo se llamó al provider original (gemini), nunca al fallback (groq).
+    assert call_counts["gemini"] == CIRCUIT_BREAKER_THRESHOLD
+    assert call_counts["groq"] == 0
+    assert all(r.get("_error") is True for r in results)
+
+
+def test_run_batch_extraction_no_fallback_when_provider_equals_fallback(monkeypatch):
+    """Si provider == fallback ya, NO reintenta (evita bucle infinito)."""
+    monkeypatch.setattr(config, "EXTRACTION_PROVIDER_FALLBACK", "groq")
+    posts = [_make_row(id=f"p{i}") for i in range(15)]
+
+    n_calls = {"n": 0}
+
+    def fake_call_llm(prompt, *, provider, **kwargs):  # noqa: ARG001
+        n_calls["n"] += 1
+        return None
+
+    with patch("saas_radar.analysis.extraction.call_llm", side_effect=fake_call_llm):
+        run_batch_extraction(posts, batch_size=5, provider="groq")
+
+    # Solo el pase original, sin retry.
+    assert n_calls["n"] == CIRCUIT_BREAKER_THRESHOLD
+
+
+def test_run_batch_extraction_fallback_also_fails_returns_fallback_results(monkeypatch):
+    """Fallback también dispara circuit breaker → resultado contiene _error=True; no crash."""
+    monkeypatch.setattr(config, "EXTRACTION_PROVIDER_FALLBACK", "groq")
+    posts = [_make_row(id=f"p{i}") for i in range(15)]
+
+    with patch("saas_radar.analysis.extraction.call_llm", return_value=None):
+        results = run_batch_extraction(posts, batch_size=5, provider="gemini")
+
+    # Tras fallback fallido, los resultados son del fallback: 3 batches con _error.
+    assert len(results) == CIRCUIT_BREAKER_THRESHOLD * 5
+    assert all(r.get("_error") is True for r in results)
