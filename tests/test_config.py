@@ -173,6 +173,15 @@ def test_high_signal_subreddits_subset_of_subreddits():
         )
 
 
+def test_indiehackers_in_high_signal_subreddits():
+    """indiehackers fue promovido a HIGH_SIGNAL en F24 (tuner recurrence ≥3)."""
+    from saas_radar import config
+
+    assert "indiehackers" in config.HIGH_SIGNAL_SUBREDDITS, (
+        "'indiehackers' debe estar en HIGH_SIGNAL_SUBREDDITS (añadido en F24)"
+    )
+
+
 def test_pain_search_queries_is_list_of_strings():
     """PAIN_SEARCH_QUERIES es una lista de strings."""
     from saas_radar import config
@@ -267,7 +276,7 @@ def test_ai_constants_present():
 
     assert config.MAX_POSTS == 80
     assert config.TEXT_SNIPPET_LEN == 500
-    assert config.MIN_SEMANTIC_SCORE == 1.5
+    assert config.MIN_SEMANTIC_SCORE == 1.0
     assert config.MAX_POST_AGE_DAYS == 365
     assert config.INCREMENTAL_POST_AGE_DAYS == 1
     assert config.CIRCUIT_BREAKER_THRESHOLD == 3
@@ -283,10 +292,10 @@ def test_pain_categories_present():
 
 
 def test_posts_cap_constants():
-    """POSTS_CAP_HIGH_SIGNAL y POSTS_CAP_DEFAULT tienen los valores del legacy."""
+    """POSTS_CAP_HIGH_SIGNAL y POSTS_CAP_DEFAULT tienen los valores actuales (F24: HIGH_SIGNAL subió a 15)."""
     from saas_radar import config
 
-    assert config.POSTS_CAP_HIGH_SIGNAL == 10
+    assert config.POSTS_CAP_HIGH_SIGNAL == 15
     assert config.POSTS_CAP_DEFAULT == 4
 
 
