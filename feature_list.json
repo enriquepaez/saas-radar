@@ -11,7 +11,8 @@
     "M1_foundation": [1, 2, 3, 4],
     "M2_pipeline_ia": [5, 6, 7, 8, 9, 10, 11, 12],
     "M3_productizacion": [13, 14, 15, 16],
-    "M4_operacion_avanzada": [17, 18, 19, 20, 21]
+    "M4_operacion_avanzada": [17, 18, 19, 20, 21],
+    "M5_post_mvp_refinement": [22, 23, 24, 25]
   },
   "features": [
     {
@@ -396,6 +397,83 @@
       ],
       "depends_on": [13, 8, 18],
       "status": "done"
+    },
+    {
+      "id": 22,
+      "name": "pipeline_persistence_restoration",
+      "milestone": "M5_post_mvp_refinement",
+      "title": "Restaurar persistencia a rama data en pipeline.yml (revertir regresión 8409bb9)",
+      "description": "El commit 8409bb9 reemplazó el push a la rama data por actions/cache. Consecuencia: el tuner.yml (que sigue leyendo de data/) opera contra la BD del 30-may; los meta_recommendations no se acumulan; el A4 no abre PRs; la BD local nunca se sincroniza con runs del cron. Esta feature restaura el patrón legacy (lecciones §1.12): checkout dual main+data, run, commit/push a data al final. Mantiene el cache para acelerar arranque. Diagnóstico completo en progress/audit_cron_state.md.",
+      "acceptance": [
+        ".github/workflows/pipeline.yml hace checkout dual: ref main + ref data en path persist/",
+        "permissions del job incluye contents: write (no solo read)",
+        "Tras el step 'Run pipeline' existe un step 'Persist to data branch' que: copia data/saas.db y data/runs/ a persist/, configura git user.email y user.name, git add, git diff --cached --quiet (skip si sin cambios), git commit -m 'chore: pipeline run YYYY-MM-DDTHH:MM:SSZ', git push origin data",
+        "El push usa GITHUB_TOKEN del workflow (no PAT)",
+        "Concurrency 'saas-radar' se mantiene; cancel-in-progress: false",
+        "actions/cache se mantiene como aceleración (no se elimina, solo se complementa con el push)",
+        "Documentar en progress/impl_pipeline_persistence_restoration.md cómo el usuario sincroniza la BD local tras un run del cron: 'git fetch origin data && git checkout origin/data -- data/saas.db data/runs/'",
+        "Verificación manual: tras 1 cron real (o 1 workflow_dispatch), origin/data tiene commit nuevo con timestamp de hoy y data/saas.db actualizado",
+        "NO hay tests automatizados — los workflows YAML solo se validan en GitHub Actions. Documentar la limitación en progress/impl_*.md"
+      ],
+      "depends_on": [16],
+      "status": "done"
+    },
+    {
+      "id": 23,
+      "name": "extraction_gemini_hardening",
+      "milestone": "M5_post_mvp_refinement",
+      "title": "Hardening de extracción Gemini: logging defensivo + fallback a groq + test schema malformado",
+      "description": "Los 2 runs failed del 30-may con Gemini terminaron en '0 extracciones válidas' por circuit breaker. Causa probable (audit_gemini_fail.md): Gemini con responseMimeType:application/json puede devolver 200 OK con JSON válido pero SIN la clave 'results' esperada → call_llm None → 3 batches consecutive _error → circuit breaker → 0 válidas. Sin logging del body crudo, debug post-mortem imposible. Esta feature añade observabilidad + un fallback simple a groq cuando el circuit breaker dispara, sin sobre-ingeniería.",
+      "acceptance": [
+        "src/saas_radar/analysis/llm_clients.py:call_gemini valida que la respuesta tiene la shape esperada antes de devolver al caller; si no, loguea WARNING con body[:500] truncado y devuelve None",
+        "src/saas_radar/analysis/extraction.py:extract_problems_batch loguea WARNING con el body[:500] o la repr del resultado cuando call_llm devuelve None o cuando 'results' no está en result",
+        "Fallback automático: cuando el circuit breaker dispararía con provider != 'groq' Y EXTRACTION_PROVIDER_FALLBACK == 'groq' (default true), reintenta los batches restantes con provider='groq' UNA SOLA VEZ; si tampoco rinde, abortar como hasta ahora",
+        "Test nuevo en tests/test_extraction.py: mock de call_llm que devuelve None en 3 batches consecutivos con provider='gemini' y resultados válidos cuando se llama con provider='groq' → el fallback activa y produce valid_extractions > 0",
+        "Test nuevo en tests/test_llm_clients.py: mock httpx que devuelve 200 OK con body {'candidates':[{'content':{'parts':[{'text':'{\"foo\":\"bar\"}'}]}}]} (sin 'results') → call_gemini detecta shape inesperado, loguea WARNING (verificable con caplog) y devuelve None",
+        "Sin cambios al schema de la BD; el fallback queda registrado en logs y opcionalmente en analysis_runs.ai_provider como 'gemini→groq' (string)",
+        "Documentación de la variable nueva EXTRACTION_PROVIDER_FALLBACK en config.py con docstring"
+      ],
+      "depends_on": [9, 22],
+      "status": "pending"
+    },
+    {
+      "id": 24,
+      "name": "signal_tuning_apply_findings",
+      "milestone": "M5_post_mvp_refinement",
+      "title": "Aplicar el tuning ya descubierto + bajar umbrales de filtrado + nuevas pain phrases",
+      "description": "El tuner viene señalando desde abril (recurrence ≥3) que indiehackers/agency/devops/accounting/msp/sysadmin/smallbusiness deben subir a HIGH_SIGNAL, y que ~30 PAIN_SEARCH_QUERIES no rinden nada en 60 días. Además, los posts oro no capturados (sem≥5 en bookkeeping/excel/shopifyecommerce) sugieren nuevas pain phrases. Esta feature consolida todo el tuning en un solo cambio a config.py, sin tocar el resto del pipeline. Ejecutar DESPUÉS de F22 para tener la BD fresca y poder medir.",
+      "acceptance": [
+        "config.HIGH_SIGNAL_SUBREDDITS añade: indiehackers, sysadmin (ya), msp (ya), devops (ya), accounting (ya), agency (ya), smallbusiness (ya) — verificar contra el set actual; el cambio neto es solo 'indiehackers'",
+        "config.SUBREDDITS añade: shopifyecommerce (ya en realidad ShopifyeCommerce — confirmar capitalización), sideproject (nuevo), bookkeeping ya está",
+        "config.PAIN_SEARCH_QUERIES elimina la lista de queries con yield=0 en 60d documentada en progress/impl_signal_tuning_apply_findings.md (mínimo 20 queries; lista exacta por consultar a la BD post-F22)",
+        "config.MIN_SEMANTIC_SCORE pasa de 1.5 a 1.0",
+        "config.POSTS_CAP_HIGH_SIGNAL pasa de 10 a 15",
+        "config.PAIN_SIGNAL_PHRASES añade al menos 5 nuevas frases extraídas de posts oro no capturados: ('pdf to csv', 3), ('drowning in spreadsheets', 3), ('spending too much time', 2), ('converting bank statement', 3), ('manage inventory in shopify', 2). Lista final por revisar en impl.md",
+        "Tests existentes de tests/test_config.py se actualizan (longitudes esperadas, nuevos miembros del set)",
+        "Tests existentes de tests/test_pain_filter.py se mantienen verdes con las nuevas frases",
+        "Tests existentes de tests/test_data_loader.py se mantienen verdes con el nuevo MIN_SEMANTIC_SCORE/POSTS_CAP",
+        "progress/impl_signal_tuning_apply_findings.md incluye una tabla 'antes/después' del yield esperado (nº opps/run en runs históricos, recomputado sobre BD fresca)"
+      ],
+      "depends_on": [22],
+      "status": "pending"
+    },
+    {
+      "id": 25,
+      "name": "dedup_v2_embeddings",
+      "milestone": "M5_post_mvp_refinement",
+      "title": "Dedup v2: pasar Jaccard a embeddings para reducir falsos negativos del cluster",
+      "description": "Dedup v1 (Jaccard sobre evidence_quotes) colapsa el 60% de opps (10→4 canónicas). Trigger documentado para v2 era 2026-06-11. v2 usa embeddings (sentence-transformers all-MiniLM-L6-v2, ~80MB local) sobre product_name+core_problem+niche para clustering cosine ≥ threshold. Mantiene backwards-compat: si ENABLE_DEDUP_V2=0 (default), usa v1. Backfill idempotente.",
+      "acceptance": [
+        "src/saas_radar/analysis/dedup.py:find_canonical_v2(opp, existing, threshold=0.75) usa sentence-transformers para comparar embeddings del texto product_name+core_problem+niche; falla limpia si el modelo no está descargado",
+        "ENABLE_DEDUP_V2 env var (default '0'): si '1', persist_run_to_db usa find_canonical_v2; si '0', usa v1 (sin cambios)",
+        "scripts/backfill_canonical_v2.py con --dry-run/--yes/--force que re-canoniza opps existentes",
+        "Acceptance cuantitativo: sobre las 10 opps actuales de BD legacy, v2 produce 5-7 canónicas (vs 4 con v1) y agrupa correctamente id=8 con el cluster {2,4,7,9,10} (verificable manualmente)",
+        "Tests cubren: threshold respetado, 2 opps con vocabulario disjunto pero embedding similar SÍ matchean (caso id=8 actual), modelo no descargado falla con mensaje claro",
+        "pyproject.toml añade sentence-transformers como dependencia opcional [dedup-v2]",
+        "Documentación en progress/impl_dedup_v2_embeddings.md: tradeoff de tamaño (~80MB) vs precisión, cómo testear localmente, plan de A/B (correr v1 y v2 en paralelo sobre 2 runs reales antes de cambiar default)"
+      ],
+      "depends_on": [15, 22, 24],
+      "status": "pending"
     }
   ]
 }

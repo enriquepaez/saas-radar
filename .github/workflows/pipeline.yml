@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   run:
@@ -40,6 +40,15 @@ jobs:
         with:
           ref: main
           fetch-depth: 1
+
+      - name: Checkout data branch
+        uses: actions/checkout@v4
+        with:
+          ref: data
+          path: persist
+          fetch-depth: 1
+          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: true
 
       - name: Restore saas.db from cache
         uses: actions/cache@v4
@@ -70,6 +79,22 @@ jobs:
           else
             python -m saas_radar.main
           fi
+
+      - name: Persist to data branch
+        if: success()
+        run: |
+          mkdir -p persist/data/runs
+          if [ -f data/saas.db ]; then
+            cp data/saas.db persist/data/saas.db
+          fi
+          if [ -d data/runs ]; then
+            cp -r data/runs/. persist/data/runs/
+          fi
+          cd persist
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git add data/saas.db data/runs/
+          git diff --cached --quiet || (git commit -m "chore: pipeline run $(date -u +%FT%TZ)" && git push origin data)
 
       - name: Upload run outputs
         if: always()
