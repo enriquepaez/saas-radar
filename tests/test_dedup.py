@@ -376,3 +376,107 @@ def test_persist_disjoint_opps_keep_separate_canonicals(temp_db):
     active = load_active_opportunities(db_url=temp_db)
     assert len(active) == 2
     assert set(active["id"]) == set(active["canonical_id"])
+
+
+# ── Tests find_canonical_v2 ──────────────────────────────────────────────
+
+
+def test_find_canonical_v2_no_installed_raises():
+    """Si sentence-transformers no está, debe lanzar RuntimeError claro."""
+    import sys
+    import unittest.mock as mock
+
+    import saas_radar.analysis.dedup as dedup_mod
+
+    original_model = dedup_mod._ST_MODEL
+    try:
+        # Forzar que el singleton no esté cargado y simular módulo ausente.
+        # existing debe tener al menos 1 elemento para que el guard `if not existing`
+        # no lo cortocircuite antes de llamar al modelo.
+        dedup_mod._ST_MODEL = None
+        with mock.patch.dict(sys.modules, {"sentence_transformers": None}):
+            with pytest.raises(RuntimeError, match="sentence-transformers not installed"):
+                from saas_radar.analysis.dedup import find_canonical_v2
+
+                find_canonical_v2(
+                    {"product_name": "x", "core_problem": "y", "niche": "z"},
+                    [{"id": 1, "canonical_id": 1, "product_name": "a", "core_problem": "b", "niche": "c"}],
+                )
+    finally:
+        # Restaurar singleton para no afectar tests posteriores.
+        dedup_mod._ST_MODEL = original_model
+
+
+def test_find_canonical_v2_empty_existing():
+    """Sin existentes, siempre devuelve None."""
+    pytest.importorskip("sentence_transformers")
+    from saas_radar.analysis.dedup import find_canonical_v2
+
+    opp = {"product_name": "Invoice Tracker", "core_problem": "manual invoicing", "niche": "accounting"}
+    assert find_canonical_v2(opp, []) is None
+
+
+def test_find_canonical_v2_identical_opps_match():
+    """Dos opps idénticas deben matchear con threshold=0.75."""
+    pytest.importorskip("sentence_transformers")
+    from saas_radar.analysis.dedup import find_canonical_v2
+
+    opp = {"product_name": "Invoice Tracker", "core_problem": "manual invoicing pain", "niche": "accounting"}
+    existing = [
+        {
+            "id": 1,
+            "canonical_id": 1,
+            "product_name": "Invoice Tracker",
+            "core_problem": "manual invoicing pain",
+            "niche": "accounting",
+        }
+    ]
+    result = find_canonical_v2(opp, existing)
+    assert result == 1
+
+
+def test_find_canonical_v2_disjoint_vocabulary_no_match_jaccard_but_embedding_may_match():
+    """
+    Vocabulario disjunto pero semánticamente similar → v2 puede matchear (a diferencia de Jaccard).
+    Este test documenta el caso id=8 del legacy: si no matchea con Jaccard pero sí con embeddings,
+    es un falso negativo corregido. El test solo verifica que la función no crashea y devuelve
+    int o None — el resultado exacto depende del modelo y threshold.
+    """
+    pytest.importorskip("sentence_transformers")
+    from saas_radar.analysis.dedup import find_canonical_v2
+
+    opp = {
+        "product_name": "Spreadsheet Automation Tool",
+        "core_problem": "manual data entry in Excel",
+        "niche": "operations",
+    }
+    existing = [
+        {
+            "id": 2,
+            "canonical_id": 2,
+            "product_name": "Data Entry Automator",
+            "core_problem": "repetitive manual spreadsheet work",
+            "niche": "productivity",
+        },
+    ]
+    result = find_canonical_v2(opp, existing)
+    assert result is None or isinstance(result, int)
+
+
+def test_find_canonical_v2_threshold_respected():
+    """Con threshold=1.0 (imposible de alcanzar con textos distintos) → None."""
+    pytest.importorskip("sentence_transformers")
+    from saas_radar.analysis.dedup import find_canonical_v2
+
+    opp = {"product_name": "Tax Helper", "core_problem": "filing taxes manually", "niche": "finance"}
+    existing = [
+        {
+            "id": 5,
+            "canonical_id": 5,
+            "product_name": "Invoice Tracker",
+            "core_problem": "manual invoicing",
+            "niche": "accounting",
+        }
+    ]
+    result = find_canonical_v2(opp, existing, threshold=1.0)
+    assert result is None

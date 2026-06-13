@@ -473,7 +473,7 @@
         "Documentación en progress/impl_dedup_v2_embeddings.md: tradeoff de tamaño (~80MB) vs precisión, cómo testear localmente, plan de A/B (correr v1 y v2 en paralelo sobre 2 runs reales antes de cambiar default)"
       ],
       "depends_on": [15, 22, 24],
-      "status": "pending"
+      "status": "done"
     }
   ]
 }

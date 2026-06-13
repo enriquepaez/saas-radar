@@ -51,6 +51,11 @@ EXTRACTION_PROVIDER = (os.getenv("EXTRACTION_PROVIDER") or "groq").lower()
 # El fallback se activa una sola vez por run: si también falla, se aborta.
 EXTRACTION_PROVIDER_FALLBACK = (os.getenv("EXTRACTION_PROVIDER_FALLBACK") or "groq").lower()
 
+# Dedup v2: si '1', persist_run_to_db usa find_canonical_v2 (embeddings);
+# si '0' (default), usa find_canonical (Jaccard v1) para mantener backwards-compat.
+# Requiere pip install 'saas-radar[dedup-v2]' (sentence-transformers ≥2.7, ~80 MB).
+ENABLE_DEDUP_V2: str = os.getenv("ENABLE_DEDUP_V2", "0")
+
 # Claude (Anthropic)
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 CLAUDE_EXTRACTION_MODEL = os.getenv("CLAUDE_EXTRACTION_MODEL", "claude-haiku-4-5-20251001")
