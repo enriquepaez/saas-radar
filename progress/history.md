@@ -367,3 +367,23 @@ Suite completa pasa (exit code 0). Reviewer aprobó todos los acceptance criteri
   - `tests/test_extraction.py` — test fallback: mock `call_llm` devuelve None para gemini, dict válido para groq → fallback activa, `valid_extractions > 0`.
 - **Verificación:** suite completa (422 tests, exit code 0). Reviewer aprobó todos los acceptance criteria A1-A7.
 - **Cierre:** F23 marcada `done`. Desbloquea: #24 `signal_tuning_apply_findings`.
+
+---
+
+## Sesión 2026-06-13 — Feature #25 dedup_v2_embeddings
+
+**Rama:** `feat/25-dedup_v2_embeddings`  
+**Estado final:** DONE (reviewer aprobó)
+
+### Cambios
+
+- `src/saas_radar/analysis/dedup.py`: añadido `find_canonical_v2` con sentence-transformers (lazy singleton `_get_st_model`), `_cosine` puro en Python, falla limpia con `RuntimeError` si el paquete no está instalado.
+- `src/saas_radar/config.py`: añadida constante `ENABLE_DEDUP_V2` (default '0').
+- `src/saas_radar/storage/db.py`: bifurcación en `persist_run_to_db` — usa v2 si `ENABLE_DEDUP_V2=='1'`, v1 en caso contrario.
+- `pyproject.toml`: dependencia opcional `[dedup-v2] = ["sentence-transformers>=2.7"]`.
+- `scripts/backfill_canonical_v2.py`: script standalone con `--dry-run/--yes/--force`.
+- `tests/test_dedup.py`: 5 tests nuevos de v2 (4 con `pytest.importorskip` para CI sin el modelo).
+
+### Verificación
+
+363 passed, 4 skipped (sentence-transformers no instalado en CI). Todos los tests de v1 intactos.

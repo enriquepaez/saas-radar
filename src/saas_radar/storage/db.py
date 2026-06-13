@@ -10,7 +10,7 @@ from datetime import datetime
 import pandas as pd
 from sqlalchemy import create_engine, text
 
-from saas_radar.analysis.dedup import find_canonical
+from saas_radar.analysis.dedup import find_canonical, find_canonical_v2
 
 logger = logging.getLogger(__name__)
 
@@ -314,12 +314,24 @@ def persist_run_to_db(
             )
             run_id = conn.execute(text("SELECT last_insert_rowid()")).scalar()
 
-            # Cargar existing UNA vez antes del loop: solo campos necesarios
-            # para find_canonical. Cargarlas dentro del loop haría N queries.
+            # Cargar existing UNA vez antes del loop: campos necesarios para
+            # find_canonical (v1: evidence_quotes) y find_canonical_v2
+            # (v2: product_name, core_problem, niche). Cargarlas dentro del
+            # loop haría N queries.
             existing_rows = [
-                {"id": r[0], "canonical_id": r[1], "product_name": r[2] or "", "evidence_quotes": r[3]}
+                {
+                    "id": r[0],
+                    "canonical_id": r[1],
+                    "product_name": r[2] or "",
+                    "evidence_quotes": r[3],
+                    "core_problem": r[4] or "",
+                    "niche": r[5] or "",
+                }
                 for r in conn.execute(
-                    text("SELECT id, canonical_id, product_name, evidence_quotes FROM opportunities")
+                    text(
+                        "SELECT id, canonical_id, product_name, evidence_quotes, "
+                        "core_problem, niche FROM opportunities"
+                    )
                 ).fetchall()
             ]
 
@@ -333,8 +345,13 @@ def persist_run_to_db(
                 "discarded", "user_notes", "created_at", "canonical_id",
             ]
 
+            from saas_radar.config import ENABLE_DEDUP_V2
+
             for opp in opportunities:
-                canonical = find_canonical(opp, existing_rows, threshold=0.3)
+                if ENABLE_DEDUP_V2 == "1":
+                    canonical = find_canonical_v2(opp, existing_rows)
+                else:
+                    canonical = find_canonical(opp, existing_rows, threshold=0.3)
 
                 opp_row = {f: opp.get(f) for f in opp_fields}
                 opp_row["run_id"] = run_id
@@ -363,6 +380,8 @@ def persist_run_to_db(
                         "canonical_id": opp_id,
                         "product_name": opp.get("product_name") or "",
                         "evidence_quotes": opp.get("evidence_quotes"),
+                        "core_problem": opp.get("core_problem") or "",
+                        "niche": opp.get("niche") or "",
                     })
 
     return run_id

@@ -1,4 +1,4 @@
-"""Dedup semántico de oportunidades entre runs usando similitud Jaccard."""
+"""Dedup semántico de oportunidades entre runs: Jaccard v1 y embeddings v2."""
 
 from __future__ import annotations
 
@@ -30,6 +30,11 @@ _EVIDENCE_STOP = {
 _ITEM_PREFIX = re.compile(r"^\s*\[item\s+\d+\]\s*", re.IGNORECASE)
 
 logger = logging.getLogger(__name__)
+
+# Lazy singleton para el modelo sentence-transformers.
+# Se carga la primera vez que find_canonical_v2 es invocada, no al importar
+# el módulo. Así el import de dedup.py no descarga/carga 80 MB en cada test.
+_ST_MODEL = None
 
 
 def _name_tokens(name: str) -> frozenset[str]:
@@ -138,5 +143,86 @@ def find_canonical(
         return None
 
     candidates.sort(key=lambda t: (-t[0], -t[1], t[2].get("id", 0)))
+    best = candidates[0][2]
+    return best.get("canonical_id") or best.get("id")
+
+
+def _get_st_model():
+    """Carga el modelo sentence-transformers como lazy singleton.
+
+    La carga ocurre una sola vez por proceso. Si sentence_transformers no está
+    instalado, lanza RuntimeError con instrucciones claras.
+    """
+    global _ST_MODEL
+    if _ST_MODEL is not None:
+        return _ST_MODEL
+
+    try:
+        from sentence_transformers import SentenceTransformer
+    except (ImportError, TypeError):
+        raise RuntimeError(
+            "sentence-transformers not installed; install with pip install 'saas-radar[dedup-v2]'"
+        )
+
+    logger.info("Cargando modelo sentence-transformers all-MiniLM-L6-v2 (primera vez)")
+    _ST_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
+    return _ST_MODEL
+
+
+def _cosine(a: "Any", b: "Any") -> float:
+    """Similitud coseno entre dos vectores numpy (arrays 1-D)."""
+    import math
+
+    dot = float(sum(float(x) * float(y) for x, y in zip(a, b)))
+    norm_a = math.sqrt(sum(float(x) ** 2 for x in a))
+    norm_b = math.sqrt(sum(float(x) ** 2 for x in b))
+    if norm_a == 0.0 or norm_b == 0.0:
+        return 0.0
+    return dot / (norm_a * norm_b)
+
+
+def find_canonical_v2(
+    opp: dict[str, Any],
+    existing: list[dict[str, Any]],
+    threshold: float = 0.75,
+) -> int | None:
+    """Devuelve el `canonical_id` de la opp existente más similar por embeddings, o None.
+
+    Texto de comparación: product_name + " " + core_problem + " " + niche.
+    Similitud coseno >= threshold → candidato. Si hay varios candidatos devuelve
+    el de mayor similitud; en caso de empate, el de menor id (id asc).
+
+    Falla limpia si sentence-transformers no está instalado: lanza RuntimeError
+    con instrucciones de instalación.
+    """
+    if not existing:
+        return None
+
+    model = _get_st_model()
+
+    def _text(d: dict[str, Any]) -> str:
+        return " ".join(
+            str(d.get(k) or "")
+            for k in ("product_name", "core_problem", "niche")
+        ).strip()
+
+    opp_text = _text(opp)
+    existing_texts = [_text(row) for row in existing]
+
+    all_texts = [opp_text] + existing_texts
+    embeddings = model.encode(all_texts, convert_to_numpy=True)
+    opp_vec = embeddings[0]
+
+    candidates: list[tuple[float, int, dict[str, Any]]] = []
+    for idx, row in enumerate(existing):
+        sim = _cosine(opp_vec, embeddings[idx + 1])
+        if sim >= threshold:
+            candidates.append((sim, row.get("id", 0), row))
+
+    if not candidates:
+        return None
+
+    # Mayor similitud primero; empate se resuelve por id asc (menor id = más antiguo = canónica)
+    candidates.sort(key=lambda t: (-t[0], t[1]))
     best = candidates[0][2]
     return best.get("canonical_id") or best.get("id")

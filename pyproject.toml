@@ -23,6 +23,7 @@ dev = [
     "respx>=0.21",
     "pyyaml>=6.0.3",
 ]
+dedup-v2 = ["sentence-transformers>=2.7"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
