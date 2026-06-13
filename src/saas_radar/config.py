@@ -71,7 +71,7 @@ MAX_POSTS = 80
 # Caracteres del body de un post que se envían al LLM por extracción
 TEXT_SNIPPET_LEN = 500
 # Umbral que debe superar _semantic_score para que un post entre al pipeline de IA
-MIN_SEMANTIC_SCORE = 1.5
+MIN_SEMANTIC_SCORE = 1.0
 # Posts más antiguos que esto se descartan
 MAX_POST_AGE_DAYS = 365
 # En modo incremental: solo posts de las últimas 24h
@@ -113,10 +113,12 @@ HIGH_SIGNAL_SUBREDDITS = {
     "smallbusiness",
     # Zapier: meta run 2026-04-18 → 100% hit, 1 payment (tier A herramientas)
     "zapier",
+    # Indie hackers: comunidad de fundadores que relatan dolor de producto real (F24, tuner recurrence ≥3)
+    "indiehackers",
 }
 
 # Posts máximos por subreddit en el ranking final
-POSTS_CAP_HIGH_SIGNAL = 10  # cap para HIGH_SIGNAL_SUBREDDITS
+POSTS_CAP_HIGH_SIGNAL = 15  # cap para HIGH_SIGNAL_SUBREDDITS
 POSTS_CAP_DEFAULT = 4  # cap para el resto de subreddits
 
 SUBREDDITS = [
@@ -180,7 +182,6 @@ PAIN_SEARCH_QUERIES = [
     # ── Workarounds manuales — señal de pago más fuerte ──────────────────
     "I use Excel to track",
     "I use Google Sheets to track",
-    "we track this in a spreadsheet",
     "manually copy paste",
     "we do this manually",
     "I hate doing this manually",
@@ -188,30 +189,17 @@ PAIN_SEARCH_QUERIES = [
     "copy paste every",
     "manually enter",
     "manually update",
-    "I export from QuickBooks and then",
     "our agency tracks this in a spreadsheet",
     "we invoice manually because",
     "I built a spreadsheet to track",
     # ── Herramientas concretas con limitaciones ───────────────────────────
     "Zapier doesn't support",
-    "Zapier can't",
-    "Zapier is too expensive",
     "Notion doesn't",
-    "Notion can't",
-    "Airtable doesn't",
-    "Airtable can't",
-    "QuickBooks doesn't",
-    "HubSpot is too expensive",
-    "Salesforce is too expensive",
     "doesn't integrate with",
     "no integration with",
     "no API for",
     "no webhook",
-    "ServiceTitan is too expensive",
-    "Jobber doesn't",
-    "Buildium doesn't",
     # ── Ausencia de herramienta — intención de compra directa ────────────
-    "I wish there was a tool",
     "why is there no app for",
     "is there a tool that",
     "looking for a SaaS that",
@@ -231,31 +219,21 @@ PAIN_SEARCH_QUERIES = [
     "how do you manage clients",
     # ── Preguntas operacionales por industria — alta especificidad ────────
     "how do you handle job costing",
-    "how do you track technician hours",
     "how do you manage tenant maintenance requests",
-    "how do you handle insurance verification",
-    "how do you track billable hours",
     "how do you manage subcontractors",
-    "how do you handle purchase orders",
-    "how do you track candidate pipeline",
     "how do you manage client reporting",
-    "how do you handle payroll for hourly",
     # ── Queries concentradas por nicho ────────────────────────────────────
     # Contabilidad / AR / reconciliación (cluster invoicing)
     "accounts receivable spreadsheet",
     "AR tracking spreadsheet",
-    "reconciliation nightmare",
     "bank reconciliation takes hours",
     "chasing invoices manually",
     "overdue invoices spreadsheet",
     "manual payment reminders",
-    "collections spreadsheet",
     # Restaurantes / food service (cluster tip/payroll/inventory)
     "tip pooling nightmare",
     "tip tracking spreadsheet",
-    "tip reconciliation",
     "food cost spreadsheet",
-    "restaurant inventory spreadsheet",
     "server tip payout",
     "payroll for tipped employees",
     # Property management (cluster maintenance/tenant tracking)
@@ -271,20 +249,13 @@ PAIN_SEARCH_QUERIES = [
     "client campaign tracking",
     # MSP / sysadmin (cluster onboarding/remote/docs)
     "onboarding checklist spreadsheet",
-    "IT onboarding manual process",
     "remote support tool frustration",
     "runbook documentation nightmare",
-    "incident runbook outdated",
     # Construcción (cluster WIP/job costing)
     "job costing spreadsheet",
     "WIP report Excel",
-    "construction job costing QuickBooks",
-    "subcontractor tracking spreadsheet",
-    # No-code tool frustration (cluster Airtable/Softr/Notion limits)
-    "Airtable too expensive alternative",
-    "Softr limitations",
+    # No-code tool frustration (cluster Softr/Notion limits)
     "Notion limitations business",
-    "no-code tool can't do",
 ]
 
 PAIN_SIGNAL_PHRASES = [
@@ -419,6 +390,11 @@ PAIN_SIGNAL_PHRASES = [
     ("how are you managing", 2),
     ("any recommendation", 1),
     ("any suggestions", 1),
+    # Nuevas frases extraídas de posts oro no capturados (F24)
+    ("pdf to csv", 3),
+    ("spending too much time", 2),
+    ("converting bank statement", 3),
+    ("manage inventory in shopify", 2),
 ]
 
 # Títulos que indican showcase/consejo/historia → descarte inmediato (penalización -99)

@@ -455,7 +455,7 @@
         "progress/impl_signal_tuning_apply_findings.md incluye una tabla 'antes/después' del yield esperado (nº opps/run en runs históricos, recomputado sobre BD fresca)"
       ],
       "depends_on": [22],
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 25,

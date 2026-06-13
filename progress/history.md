@@ -343,6 +343,18 @@ Suite completa pasa (exit code 0). Reviewer aprobó todos los acceptance criteri
 
 ---
 
+## Sesión 2026-06-13 — Feature #24 `signal_tuning_apply_findings`
+
+- **Rama:** `feat/24-signal_tuning_apply_findings`
+- **Subagentes:** implementer + reviewer
+- **Archivos modificados:**
+  - `src/saas_radar/config.py` — `MIN_SEMANTIC_SCORE` 1.5→1.0, `POSTS_CAP_HIGH_SIGNAL` 10→15, `indiehackers` añadido a `HIGH_SIGNAL_SUBREDDITS`, 31 queries muertas (yield=0 en 60d, consultado sobre `data/saas.db`) eliminadas de `PAIN_SEARCH_QUERIES`, 4 frases nuevas añadidas a `PAIN_SIGNAL_PHRASES` (`pdf to csv`, `spending too much time`, `converting bank statement`, `manage inventory in shopify`; `drowning in spreadsheets` ya existía).
+  - `tests/test_config.py` — ajustado el assert de longitud de `PAIN_SEARCH_QUERIES` (95→64).
+- **Verificación:** 73/73 tests verdes (test_config, test_pain_filter, test_data_loader). Reviewer aprobó todos los acceptance criteria.
+- **Cierre:** F24 marcada `done`. Desbloquea: #25 `dedup_v2_embeddings`.
+
+---
+
 ## Sesión 2026-06-12 — Feature #23 `extraction_gemini_hardening`
 
 - **Rama:** `feat/23-extraction_gemini_hardening`
