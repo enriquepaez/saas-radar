@@ -66,14 +66,14 @@ def fetch_posts(subreddit_name: str, limit: int = POST_LIMIT, incremental: bool 
         feeds = [
             sub.new(limit=limit),
             sub.hot(limit=limit),
-            sub.top("day", limit=limit // 2),
+            sub.top(time_filter="day", limit=limit // 2),
         ]
     else:
         feeds = [
             sub.hot(limit=limit),
             sub.new(limit=limit // 2),
-            sub.top("month", limit=limit // 2),
-            sub.top("year", limit=limit // 2),
+            sub.top(time_filter="month", limit=limit // 2),
+            sub.top(time_filter="year", limit=limit // 2),
         ]
 
     seen_ids: set[str] = set()

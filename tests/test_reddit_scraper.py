@@ -71,7 +71,7 @@ def test_fetch_posts_full_mode_feeds():
     mock_sub = MagicMock()
     mock_sub.hot.return_value = [post_a]
     mock_sub.new.return_value = [post_b]
-    mock_sub.top.side_effect = lambda period, limit: [post_c] if period == "month" else [post_d]
+    mock_sub.top.side_effect = lambda time_filter, limit: [post_c] if time_filter == "month" else [post_d]
 
     mock_reddit = MagicMock()
     mock_reddit.subreddit.return_value = mock_sub
@@ -81,7 +81,7 @@ def test_fetch_posts_full_mode_feeds():
 
     mock_sub.hot.assert_called_once()
     mock_sub.new.assert_called_once()
-    top_calls = [call[0][0] for call in mock_sub.top.call_args_list]
+    top_calls = [c.kwargs.get("time_filter") for c in mock_sub.top.call_args_list]
     assert "month" in top_calls
     assert "year" in top_calls
     assert len(df) == 4
@@ -106,7 +106,7 @@ def test_fetch_posts_incremental_mode_feeds():
 
     mock_sub.new.assert_called_once()
     mock_sub.hot.assert_called_once()
-    top_calls = [call[0][0] for call in mock_sub.top.call_args_list]
+    top_calls = [c.kwargs.get("time_filter") for c in mock_sub.top.call_args_list]
     assert "day" in top_calls
     assert "month" not in top_calls
     assert "year" not in top_calls
