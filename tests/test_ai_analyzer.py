@@ -504,3 +504,60 @@ def test_extraction_uses_extraction_provider(tmp_path):
     assert kwargs.get("provider") == "groq", (
         f"run_batch_extraction llamado con provider={kwargs.get('provider')!r}, esperado 'groq'"
     )
+
+
+# ── Test 10: fallback de síntesis cuando el provider principal devuelve None ──
+
+
+def test_synthesis_fallback_on_none(tmp_path):
+    """Cuando call_llm devuelve None con gemini pero devuelve resultado con claude
+    (fallback), el run debe persistirse con ai_provider='gemini→claude' y status ok.
+
+    Simula el escenario de producción: AI_PROVIDER=gemini, que agota rate limit
+    (429) devolviendo None, y SYNTHESIS_PROVIDER_FALLBACK=claude que responde OK.
+    """
+    import saas_radar.analysis.ai_analyzer as ai_mod
+    from saas_radar.analysis import ai_analyzer
+
+    db_file = tmp_path / "test.db"
+    _init_test_db(str(db_file))
+
+    posts_df = pd.DataFrame([_make_post(i) for i in range(3)])
+    extractions = [_make_extraction(i) for i in range(3)]
+    synthesis_raw = _make_synthesis_response(n_opps=1)
+
+    # call_llm devuelve None cuando provider="gemini", resultado válido cuando provider="claude"
+    def mock_call_llm(prompt, max_tokens, phase, provider):
+        if provider == "gemini":
+            return None
+        return synthesis_raw
+
+    with (
+        patch("saas_radar.analysis.ai_analyzer.init_db"),
+        patch("saas_radar.analysis.ai_analyzer.load_pain_posts", return_value=posts_df),
+        patch("saas_radar.analysis.ai_analyzer.run_batch_extraction", return_value=extractions),
+        patch("saas_radar.analysis.ai_analyzer._clean_extractions", return_value=extractions),
+        patch("saas_radar.analysis.ai_analyzer.build_synthesis_prompt", return_value=("PROMPT", extractions)),
+        patch("saas_radar.analysis.ai_analyzer.call_llm", side_effect=mock_call_llm),
+        patch("saas_radar.analysis.ai_analyzer._validate_synthesis", return_value=synthesis_raw),
+        patch("saas_radar.analysis.ai_analyzer._save_extractions_cache"),
+        patch("saas_radar.analysis.ai_analyzer._print_results"),
+        patch.object(ai_mod.config, "SYNTHESIS_PROVIDER_FALLBACK", "claude"),
+    ):
+        result = ai_mod.run_ai_analysis(
+            top_n=3,
+            provider="gemini",
+            use_cached_extractions=False,
+            output_path=str(tmp_path / "runs"),
+            db_path=str(db_file),
+        )
+
+    assert result["status"] == "ok"
+    assert len(result["opportunities"]) == 1
+
+    conn = sqlite3.connect(str(db_file))
+    rows = conn.execute("SELECT status, ai_provider FROM analysis_runs").fetchall()
+    conn.close()
+    assert len(rows) == 1
+    assert rows[0][0] == "ok"
+    assert rows[0][1] == "gemini→claude"

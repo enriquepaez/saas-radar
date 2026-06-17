@@ -271,6 +271,16 @@ def run_ai_analysis(
     raw = call_llm(prompt, max_tokens=4096, phase="synthesis", provider=provider)
 
     if raw is None:
+        # Intentar con el provider de respaldo antes de abortar
+        fallback_provider = config.SYNTHESIS_PROVIDER_FALLBACK
+        if fallback_provider and fallback_provider != provider:
+            logger.info("Síntesis falló con %s, reintentando con fallback %s...", provider, fallback_provider)
+            raw = call_llm(prompt, max_tokens=4096, phase="synthesis", provider=fallback_provider)
+            if raw is not None:
+                provider = f"{provider}→{fallback_provider}"
+                logger.info("Fallback de síntesis exitoso con %s", fallback_provider)
+
+    if raw is None:
         logger.error("LLM devolvió None en síntesis. Abortando.")
         run_id = persist_run_to_db(
             run_data={

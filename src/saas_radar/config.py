@@ -51,6 +51,11 @@ EXTRACTION_PROVIDER = (os.getenv("EXTRACTION_PROVIDER") or "groq").lower()
 # El fallback se activa una sola vez por run: si también falla, se aborta.
 EXTRACTION_PROVIDER_FALLBACK = (os.getenv("EXTRACTION_PROVIDER_FALLBACK") or "groq").lower()
 
+# Provider de respaldo cuando la síntesis falla (ej: Gemini devuelve 429 rate limit).
+# Default "claude". String vacío → desactiva el fallback (la síntesis aborta como siempre).
+# El fallback se intenta una sola vez; si también falla, se aborta.
+SYNTHESIS_PROVIDER_FALLBACK = (os.getenv("SYNTHESIS_PROVIDER_FALLBACK") or "claude").lower()
+
 # Dedup v2: si '1', persist_run_to_db usa find_canonical_v2 (embeddings);
 # si '0' (default), usa find_canonical (Jaccard v1) para mantener backwards-compat.
 # Requiere pip install 'saas-radar[dedup-v2]' (sentence-transformers ≥2.7, ~80 MB).
