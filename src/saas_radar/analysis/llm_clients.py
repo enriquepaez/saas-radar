@@ -1,4 +1,4 @@
-"""Clientes HTTP para Claude, Gemini y Groq con dispatcher unificado."""
+"""Cliente HTTP para Groq con dispatcher unificado."""
 
 from __future__ import annotations
 
@@ -13,9 +13,7 @@ from saas_radar import config
 
 logger = logging.getLogger(__name__)
 
-# URL base de cada API — hardcodeadas, no dependen de config en runtime
-_CLAUDE_URL = "https://api.anthropic.com/v1/messages"
-_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
+# URL base de la API — hardcodeada, no depende de config en runtime
 _GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 
@@ -50,173 +48,6 @@ def _parse_json_payload(text: str) -> dict | None:
         return json.loads(text)
     except (json.JSONDecodeError, ValueError):
         return None
-
-
-def call_claude(
-    prompt: str,
-    max_tokens: int = 4096,
-    model: str | None = None,
-    max_retries: int = 3,
-) -> dict | None:
-    """Llama a Anthropic Messages API. Devuelve dict JSON o None en fallo definitivo."""
-    if not config.ANTHROPIC_API_KEY:
-        logger.error("ANTHROPIC_API_KEY no configurada")
-        return None
-
-    model = model or config.CLAUDE_EXTRACTION_MODEL
-    headers = {
-        "x-api-key": config.ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-    }
-    body = {
-        "model": model,
-        "max_tokens": max_tokens,
-        "temperature": 0.1,
-        "messages": [{"role": "user", "content": prompt}],
-    }
-
-    for attempt in range(max_retries):
-        try:
-            with httpx.Client(timeout=120) as client:
-                response = client.post(_CLAUDE_URL, headers=headers, json=body)
-
-            if response.status_code == 429:
-                # Claude incluye el tiempo de espera en segundos en el header
-                # 'retry-after'. Puede ser float ("2.5") o estar ausente.
-                try:
-                    wait = int(float(response.headers.get("retry-after", 30)))
-                except (ValueError, TypeError):
-                    wait = 30
-                logger.warning("Claude rate limit (intento %d/%d). Esperando %ds...", attempt + 1, max_retries, wait)
-                time.sleep(wait)
-                continue
-
-            if response.status_code >= 500:
-                logger.warning("Claude error %d (intento %d/%d)", response.status_code, attempt + 1, max_retries)
-                if attempt < max_retries - 1:
-                    time.sleep(1)
-                continue
-
-            if response.status_code != 200:
-                logger.error("Claude error %d: %s", response.status_code, response.text[:300])
-                return None
-
-            data = response.json()
-            # Messages API devuelve content[0].text con el texto generado
-            raw_text = data["content"][0]["text"].strip()
-            return _parse_json_payload(raw_text)
-
-        except (KeyError, IndexError) as e:
-            logger.error("Claude respuesta inesperada: %s", e)
-            return None
-        except Exception as e:
-            logger.error("Claude error inesperado (intento %d/%d): %s", attempt + 1, max_retries, e)
-            if attempt < max_retries - 1:
-                time.sleep(1)
-
-    logger.warning("Claude agotó %d retries. Devolviendo None.", max_retries)
-    return None
-
-
-def call_gemini(
-    prompt: str,
-    max_tokens: int = 4096,
-    max_retries: int = 3,
-) -> dict | None:
-    """Llama a Google AI Studio (Gemini). Devuelve dict JSON o None en fallo definitivo."""
-    if not config.GEMINI_API_KEY:
-        logger.error("GEMINI_API_KEY no configurada")
-        return None
-
-    model = config.GEMINI_MODEL
-    url = f"{_GEMINI_BASE_URL}/{model}:generateContent?key={config.GEMINI_API_KEY}"
-    headers = {"Content-Type": "application/json"}
-    body = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "temperature": 0.1,
-            "maxOutputTokens": max_tokens,
-            "responseMimeType": "application/json",
-        },
-    }
-
-    for attempt in range(max_retries):
-        try:
-            with httpx.Client(timeout=120) as client:
-                response = client.post(url, headers=headers, json=body)
-
-            if response.status_code == 429:
-                # Gemini devuelve retryDelay dentro de error.details, p.ej. "31s"
-                wait = None
-                try:
-                    err = response.json().get("error", {})
-                    for det in err.get("details", []) or []:
-                        rd = det.get("retryDelay", "")
-                        if rd.endswith("s"):
-                            # Convertimos "31s" → 31 y añadimos 1s de margen
-                            wait = int(float(rd[:-1])) + 1
-                            break
-                except Exception:
-                    pass
-                if wait is None:
-                    wait = 30 * (attempt + 1)
-                logger.warning("Gemini rate limit (intento %d/%d). Esperando %ds...", attempt + 1, max_retries, wait)
-                time.sleep(wait)
-                continue
-
-            if response.status_code >= 500:
-                logger.warning("Gemini error %d (intento %d/%d)", response.status_code, attempt + 1, max_retries)
-                if attempt < max_retries - 1:
-                    time.sleep(1)
-                continue
-
-            if response.status_code != 200:
-                logger.error("Gemini error %d: %s", response.status_code, response.text[:300])
-                return None
-
-            data = response.json()
-            # Estructura de respuesta: candidates[0].content.parts[0].text.
-            # Validación defensiva: Gemini con responseMimeType=application/json
-            # puede devolver 200 OK con un envelope incompleto (sin candidates,
-            # con finishReason!=STOP, o con text vacío). Loguear el body
-            # truncado a 500 chars antes de devolver None facilita el debug
-            # post-mortem documentado en progress/audit_gemini_fail.md.
-            body_preview = response.text[:500]
-            candidates = data.get("candidates") or []
-            if not candidates:
-                logger.warning("Gemini sin candidates en la respuesta. body[:500]=%s", body_preview)
-                return None
-            parts = candidates[0].get("content", {}).get("parts") or []
-            if not parts:
-                finish = candidates[0].get("finishReason", "?")
-                logger.warning(
-                    "Gemini sin parts (finishReason=%s). body[:500]=%s",
-                    finish,
-                    body_preview,
-                )
-                return None
-            raw_text = parts[0].get("text", "").strip()
-            if not raw_text:
-                logger.warning("Gemini devolvió text vacío. body[:500]=%s", body_preview)
-                return None
-
-            parsed = _parse_json_payload(raw_text)
-            if parsed is None:
-                logger.warning("Gemini text no parseable como JSON. text[:500]=%s", raw_text[:500])
-                return None
-            return parsed
-
-        except (KeyError, IndexError) as e:
-            logger.error("Gemini respuesta inesperada: %s", e)
-            return None
-        except Exception as e:
-            logger.error("Gemini error inesperado (intento %d/%d): %s", attempt + 1, max_retries, e)
-            if attempt < max_retries - 1:
-                time.sleep(1)
-
-    logger.warning("Gemini agotó %d retries. Devolviendo None.", max_retries)
-    return None
 
 
 def call_groq(
@@ -292,31 +123,16 @@ def call_groq(
 def call_llm(
     prompt: str,
     max_tokens: int = 4096,
-    phase: str = "extraction",
     max_retries: int = 3,
-    provider: str = "claude",
 ) -> dict | None:
-    """Dispatcher unificado para los 3 proveedores LLM.
+    """Dispatcher unificado — único proveedor: Groq.
 
     Args:
         prompt: Texto del prompt a enviar al LLM.
         max_tokens: Límite de tokens en la respuesta.
-        phase: 'extraction' (usa CLAUDE_EXTRACTION_MODEL) o 'synthesis'
-               (usa CLAUDE_SYNTHESIS_MODEL). Solo aplica a Claude.
         max_retries: Número máximo de intentos en caso de error.
-        provider: 'claude', 'gemini' o 'groq'. NUNCA lee config.AI_PROVIDER —
-                  el caller es responsable de pasar el valor correcto.
 
     Returns:
-        dict con el JSON parseado, o None si el proveedor falla tras max_retries.
+        dict con el JSON parseado, o None si Groq falla tras max_retries.
     """
-    if provider == "claude":
-        model = config.CLAUDE_SYNTHESIS_MODEL if phase == "synthesis" else config.CLAUDE_EXTRACTION_MODEL
-        return call_claude(prompt, max_tokens=max_tokens, model=model, max_retries=max_retries)
-    if provider == "gemini":
-        return call_gemini(prompt, max_tokens=max_tokens, max_retries=max_retries)
-    if provider == "groq":
-        return call_groq(prompt, max_tokens=max_tokens, max_retries=max_retries)
-
-    logger.error("Provider desconocido: %r. Usa 'claude', 'gemini' o 'groq'.", provider)
-    return None
+    return call_groq(prompt, max_tokens=max_tokens, max_retries=max_retries)

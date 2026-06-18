@@ -13,8 +13,6 @@ load_dotenv()
 # ── Credenciales (env vars) ────────────────────────────────────────────────
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 REDDIT_CLIENT_ID = (os.getenv("REDDIT_CLIENT_ID") or "").strip()
 REDDIT_CLIENT_SECRET = (os.getenv("REDDIT_CLIENT_SECRET") or "").strip()
 REDDIT_USER_AGENT = (os.getenv("REDDIT_USER_AGENT") or "saas-radar/1.0").strip()
@@ -36,41 +34,12 @@ COMMENT_TARGET_POSTS = 200
 
 # ── AI / LLM ───────────────────────────────────────────────────────────────
 
-# Provider: "claude" (Anthropic), "gemini" (Google AI Studio), "groq" (fallback).
-AI_PROVIDER = (os.getenv("AI_PROVIDER") or "claude").lower()
-
-# Provider para la fase de extracción (puede diferir de AI_PROVIDER para evitar rate limits).
-# Default "groq": límites generosos en free tier, ideal para los múltiples batches de extracción.
-# La síntesis sigue usando AI_PROVIDER.
-EXTRACTION_PROVIDER = (os.getenv("EXTRACTION_PROVIDER") or "groq").lower()
-
-# Provider de respaldo cuando la extracción con EXTRACTION_PROVIDER dispara el
-# circuit breaker (3 batches consecutivos sin resultado válido). Default "groq"
-# porque es el más estable en free tier y rara vez devuelve schemas malformados.
-# String vacío → desactiva el fallback (la extracción aborta como antes de F23).
-# El fallback se activa una sola vez por run: si también falla, se aborta.
-EXTRACTION_PROVIDER_FALLBACK = (os.getenv("EXTRACTION_PROVIDER_FALLBACK") or "groq").lower()
-
-# Provider de respaldo cuando la síntesis falla (ej: Gemini devuelve 429 rate limit).
-# Default "claude". String vacío → desactiva el fallback (la síntesis aborta como siempre).
-# El fallback se intenta una sola vez; si también falla, se aborta.
-SYNTHESIS_PROVIDER_FALLBACK = (os.getenv("SYNTHESIS_PROVIDER_FALLBACK") or "claude").lower()
-
 # Dedup v2: si '1', persist_run_to_db usa find_canonical_v2 (embeddings);
 # si '0' (default), usa find_canonical (Jaccard v1) para mantener backwards-compat.
 # Requiere pip install 'saas-radar[dedup-v2]' (sentence-transformers ≥2.7, ~80 MB).
 ENABLE_DEDUP_V2: str = os.getenv("ENABLE_DEDUP_V2", "0")
 
-# Claude (Anthropic)
-ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
-CLAUDE_EXTRACTION_MODEL = os.getenv("CLAUDE_EXTRACTION_MODEL", "claude-haiku-4-5-20251001")
-CLAUDE_SYNTHESIS_MODEL = os.getenv("CLAUDE_SYNTHESIS_MODEL", "claude-sonnet-4-6")
-
-# Gemini (Google AI Studio) — free tier muy generoso: 1500 req/día, 1M TPM
-GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models"
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
-
-# Groq (legacy / fallback)
+# Groq
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL = "llama-3.3-70b-versatile"
 

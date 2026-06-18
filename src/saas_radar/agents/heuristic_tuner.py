@@ -195,7 +195,6 @@ def _dedup_against_config(suggestions: dict) -> dict:
 def generate_heuristic_suggestions(
     meta_json_path: str,
     top_posts_df: pd.DataFrame,
-    provider: str = "claude",
 ) -> dict:
     """Genera sugerencias heurísticas de queries, subreddits y frases de dolor.
 
@@ -204,7 +203,6 @@ def generate_heuristic_suggestions(
             Lee recurring_niches (recurrence >= 2), discovered_subreddits y empty_queries.
         top_posts_df: DataFrame con los posts de mayor semantic_score del run.
             Columnas esperadas: title, text, subreddit, semantic_score.
-        provider: Provider LLM a usar ('claude', 'gemini', 'groq').
 
     Returns:
         dict con claves new_queries, new_subreddits, new_phrases. Si el LLM
@@ -225,8 +223,8 @@ def generate_heuristic_suggestions(
 
     # Construir y enviar el prompt
     prompt = _build_prompt(recurring_niches, top_posts_df, discovered_subreddits, empty_queries)
-    logger.info("Llamando al LLM (%s) para sugerencias heurísticas...", provider)
-    result = call_llm(prompt, provider=provider, phase="synthesis")
+    logger.info("Llamando al LLM (groq) para sugerencias heurísticas...")
+    result = call_llm(prompt)
 
     if result is None:
         logger.warning("LLM devolvió None para sugerencias heurísticas — skipping.")
@@ -318,7 +316,6 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--meta-json", required=True, help="Path al JSON de meta-análisis del run.")
     parser.add_argument("--db-path", default="data/saas.db", help="Path a la BD SQLite.")
-    parser.add_argument("--provider", default="claude", help="Provider LLM: claude | gemini | groq.")
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -340,11 +337,10 @@ def main(argv: list[str] | None = None) -> int:
     suggestions = generate_heuristic_suggestions(
         meta_json_path=args.meta_json,
         top_posts_df=top_posts_df,
-        provider=args.provider,
     )
 
     # Imprimir resumen
-    print(f"\n── SUGERENCIAS HEURÍSTICAS LLM ({args.provider}) ──")
+    print("\n── SUGERENCIAS HEURÍSTICAS LLM (groq) ──")
     new_q = suggestions.get("new_queries", [])
     new_s = suggestions.get("new_subreddits", [])
     new_p = suggestions.get("new_phrases", [])

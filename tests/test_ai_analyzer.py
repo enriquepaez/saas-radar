@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pandas as pd
 
@@ -177,6 +177,7 @@ def test_full_pipeline_ok(tmp_path):
         patch("saas_radar.analysis.ai_analyzer.init_db"),
         patch("saas_radar.analysis.ai_analyzer.load_pain_posts", return_value=posts_df),
         patch("saas_radar.analysis.ai_analyzer.run_batch_extraction", return_value=extractions),
+        patch("saas_radar.analysis.ai_analyzer.extract_problem_deep", return_value=_make_extraction(0)),
         patch("saas_radar.analysis.ai_analyzer._clean_extractions", return_value=extractions),
         patch("saas_radar.analysis.ai_analyzer.build_synthesis_prompt", return_value=("PROMPT", extractions)),
         patch("saas_radar.analysis.ai_analyzer.call_llm", return_value=synthesis_raw),
@@ -188,7 +189,6 @@ def test_full_pipeline_ok(tmp_path):
 
         result = run_ai_analysis(
             top_n=3,
-            provider="claude",
             use_cached_extractions=False,
             output_path=str(tmp_path / "runs"),
             db_path=str(db_file),
@@ -199,10 +199,11 @@ def test_full_pipeline_ok(tmp_path):
 
     # Verificar la BD
     conn = sqlite3.connect(str(db_file))
-    rows = conn.execute("SELECT status FROM analysis_runs").fetchall()
+    rows = conn.execute("SELECT status, ai_provider FROM analysis_runs").fetchall()
     conn.close()
     assert len(rows) == 1
     assert rows[0][0] == "ok"
+    assert rows[0][1] == "groq"
 
 
 # ── Test 2: abort por < 2 extracciones válidas ────────────────────────────────
@@ -222,6 +223,7 @@ def test_abort_too_few_valid(tmp_path):
         patch("saas_radar.analysis.ai_analyzer.init_db"),
         patch("saas_radar.analysis.ai_analyzer.load_pain_posts", return_value=posts_df),
         patch("saas_radar.analysis.ai_analyzer.run_batch_extraction", return_value=one_extraction),
+        patch("saas_radar.analysis.ai_analyzer.extract_problem_deep", return_value=_make_extraction(0)),
         patch("saas_radar.analysis.ai_analyzer._clean_extractions", return_value=one_extraction),
         patch("saas_radar.analysis.ai_analyzer._save_extractions_cache"),
         patch("saas_radar.analysis.ai_analyzer.call_llm", mock_call_llm),
@@ -230,7 +232,6 @@ def test_abort_too_few_valid(tmp_path):
 
         result = run_ai_analysis(
             top_n=3,
-            provider="claude",
             use_cached_extractions=False,
             output_path=str(tmp_path / "runs"),
             db_path=str(db_file),
@@ -316,7 +317,6 @@ def test_use_cached_extractions(tmp_path):
 
         result = run_ai_analysis(
             top_n=2,
-            provider="claude",
             use_cached_extractions=True,
             extractions_cache_path=str(cache_file),
             output_path=str(tmp_path / "runs"),
@@ -391,6 +391,7 @@ def test_partial_status_when_no_opportunities(tmp_path):
         patch("saas_radar.analysis.ai_analyzer.init_db"),
         patch("saas_radar.analysis.ai_analyzer.load_pain_posts", return_value=posts_df),
         patch("saas_radar.analysis.ai_analyzer.run_batch_extraction", return_value=extractions),
+        patch("saas_radar.analysis.ai_analyzer.extract_problem_deep", return_value=_make_extraction(0)),
         patch("saas_radar.analysis.ai_analyzer._clean_extractions", return_value=extractions),
         patch("saas_radar.analysis.ai_analyzer.build_synthesis_prompt", return_value=("PROMPT", extractions)),
         patch("saas_radar.analysis.ai_analyzer.call_llm", return_value=empty_synthesis),
@@ -402,7 +403,6 @@ def test_partial_status_when_no_opportunities(tmp_path):
 
         result = run_ai_analysis(
             top_n=3,
-            provider="claude",
             use_cached_extractions=False,
             output_path=str(tmp_path / "runs"),
             db_path=str(db_file),
@@ -432,6 +432,7 @@ def test_llm_none_in_synthesis(tmp_path):
         patch("saas_radar.analysis.ai_analyzer.init_db"),
         patch("saas_radar.analysis.ai_analyzer.load_pain_posts", return_value=posts_df),
         patch("saas_radar.analysis.ai_analyzer.run_batch_extraction", return_value=extractions),
+        patch("saas_radar.analysis.ai_analyzer.extract_problem_deep", return_value=_make_extraction(0)),
         patch("saas_radar.analysis.ai_analyzer._clean_extractions", return_value=extractions),
         patch("saas_radar.analysis.ai_analyzer.build_synthesis_prompt", return_value=("PROMPT", extractions)),
         patch("saas_radar.analysis.ai_analyzer.call_llm", return_value=None),
@@ -441,7 +442,6 @@ def test_llm_none_in_synthesis(tmp_path):
 
         result = run_ai_analysis(
             top_n=3,
-            provider="claude",
             use_cached_extractions=False,
             output_path=str(tmp_path / "runs"),
             db_path=str(db_file),
@@ -456,40 +456,29 @@ def test_llm_none_in_synthesis(tmp_path):
     assert "None" in rows[0][1]
 
 
-# ── Test 9: extracción usa EXTRACTION_PROVIDER aunque AI_PROVIDER sea distinto ──
+# ── Test 9: _extract_and_cache llama a las funciones de extracción correctas ──
 
 
-def test_extraction_uses_extraction_provider(tmp_path):
-    """Verifica que extract_problem_deep y run_batch_extraction se llaman con
-    el extraction_provider recibido como argumento, independiente del provider de síntesis.
-
-    Escenario: extraction_provider='groq' (leído de config en run_ai_analysis).
-    Con 2 posts (≤ DEEP_EXTRACTION_THRESHOLD=30) se usa extract_problem_deep.
-    Con 31 posts (> DEEP_EXTRACTION_THRESHOLD=30) se usa run_batch_extraction.
-    En ambos casos el provider pasado a la función de extracción debe ser 'groq'.
-
-    _extract_and_cache recibe extraction_provider como argumento explícito;
-    NO lee config.* (architecture.md §3: solo run_ai_analysis puede leer config).
-    """
+def test_extract_and_cache_uses_deep_for_few_posts(tmp_path):
+    """Con N <= DEEP_EXTRACTION_THRESHOLD posts, _extract_and_cache usa extract_problem_deep."""
     import saas_radar.analysis.ai_analyzer as ai_mod
 
-    # ── Caso A: modo deep (N=2 <= 30) ──────────────────────────────────────
-    mock_deep = MagicMock(side_effect=lambda row, provider: _make_extraction(0))
+    mock_deep = MagicMock(side_effect=lambda row: _make_extraction(0))
 
     with (
         patch("saas_radar.analysis.ai_analyzer.extract_problem_deep", mock_deep),
         patch("saas_radar.analysis.ai_analyzer._save_extractions_cache"),
     ):
         posts = [_make_post(i) for i in range(2)]
-        ai_mod._extract_and_cache(posts, "cache.json", extraction_provider="groq")
+        ai_mod._extract_and_cache(posts, "cache.json")
 
-    # Todas las llamadas deben haber usado provider='groq'
-    for c in mock_deep.call_args_list:
-        assert c.kwargs.get("provider") == "groq" or c.args[1] == "groq", (
-            f"extract_problem_deep llamado con provider incorrecto: {c}"
-        )
+    assert mock_deep.call_count == 2
 
-    # ── Caso B: modo batch (N=31 > 30) ──────────────────────────────────────
+
+def test_extract_and_cache_uses_batch_for_many_posts(tmp_path):
+    """Con N > DEEP_EXTRACTION_THRESHOLD posts, _extract_and_cache usa run_batch_extraction."""
+    import saas_radar.analysis.ai_analyzer as ai_mod
+
     mock_batch = MagicMock(return_value=[_make_extraction(0), _make_extraction(1)])
 
     with (
@@ -497,67 +486,6 @@ def test_extraction_uses_extraction_provider(tmp_path):
         patch("saas_radar.analysis.ai_analyzer._save_extractions_cache"),
     ):
         posts_batch = [_make_post(i) for i in range(31)]
-        ai_mod._extract_and_cache(posts_batch, "cache.json", extraction_provider="groq")
+        ai_mod._extract_and_cache(posts_batch, "cache.json")
 
     mock_batch.assert_called_once()
-    _, kwargs = mock_batch.call_args
-    assert kwargs.get("provider") == "groq", (
-        f"run_batch_extraction llamado con provider={kwargs.get('provider')!r}, esperado 'groq'"
-    )
-
-
-# ── Test 10: fallback de síntesis cuando el provider principal devuelve None ──
-
-
-def test_synthesis_fallback_on_none(tmp_path):
-    """Cuando call_llm devuelve None con gemini pero devuelve resultado con claude
-    (fallback), el run debe persistirse con ai_provider='gemini→claude' y status ok.
-
-    Simula el escenario de producción: AI_PROVIDER=gemini, que agota rate limit
-    (429) devolviendo None, y SYNTHESIS_PROVIDER_FALLBACK=claude que responde OK.
-    """
-    import saas_radar.analysis.ai_analyzer as ai_mod
-    from saas_radar.analysis import ai_analyzer
-
-    db_file = tmp_path / "test.db"
-    _init_test_db(str(db_file))
-
-    posts_df = pd.DataFrame([_make_post(i) for i in range(3)])
-    extractions = [_make_extraction(i) for i in range(3)]
-    synthesis_raw = _make_synthesis_response(n_opps=1)
-
-    # call_llm devuelve None cuando provider="gemini", resultado válido cuando provider="claude"
-    def mock_call_llm(prompt, max_tokens, phase, provider):
-        if provider == "gemini":
-            return None
-        return synthesis_raw
-
-    with (
-        patch("saas_radar.analysis.ai_analyzer.init_db"),
-        patch("saas_radar.analysis.ai_analyzer.load_pain_posts", return_value=posts_df),
-        patch("saas_radar.analysis.ai_analyzer.run_batch_extraction", return_value=extractions),
-        patch("saas_radar.analysis.ai_analyzer._clean_extractions", return_value=extractions),
-        patch("saas_radar.analysis.ai_analyzer.build_synthesis_prompt", return_value=("PROMPT", extractions)),
-        patch("saas_radar.analysis.ai_analyzer.call_llm", side_effect=mock_call_llm),
-        patch("saas_radar.analysis.ai_analyzer._validate_synthesis", return_value=synthesis_raw),
-        patch("saas_radar.analysis.ai_analyzer._save_extractions_cache"),
-        patch("saas_radar.analysis.ai_analyzer._print_results"),
-        patch.object(ai_mod.config, "SYNTHESIS_PROVIDER_FALLBACK", "claude"),
-    ):
-        result = ai_mod.run_ai_analysis(
-            top_n=3,
-            provider="gemini",
-            use_cached_extractions=False,
-            output_path=str(tmp_path / "runs"),
-            db_path=str(db_file),
-        )
-
-    assert result["status"] == "ok"
-    assert len(result["opportunities"]) == 1
-
-    conn = sqlite3.connect(str(db_file))
-    rows = conn.execute("SELECT status, ai_provider FROM analysis_runs").fetchall()
-    conn.close()
-    assert len(rows) == 1
-    assert rows[0][0] == "ok"
-    assert rows[0][1] == "gemini→claude"

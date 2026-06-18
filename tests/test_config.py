@@ -10,37 +10,6 @@ def test_import_without_dotenv():
     import saas_radar.config  # noqa: F401
 
 
-def test_ai_provider_default():
-    """AI_PROVIDER tiene el valor por defecto 'claude' si no hay env var."""
-    from saas_radar import config
-
-    # Si el entorno no tiene AI_PROVIDER seteado, el default es 'claude'.
-    # Usamos importlib.reload para garantizar que se lee el estado actual.
-    importlib.reload(config)
-    import os
-
-    if "AI_PROVIDER" not in os.environ:
-        assert config.AI_PROVIDER == "claude"
-
-
-def test_ai_provider_env_override(monkeypatch):
-    """monkeypatch de AI_PROVIDER se refleja tras reimportar el módulo."""
-    monkeypatch.setenv("AI_PROVIDER", "gemini")
-    from saas_radar import config
-
-    importlib.reload(config)
-    assert config.AI_PROVIDER == "gemini"
-
-
-def test_ai_provider_groq_override(monkeypatch):
-    """AI_PROVIDER acepta 'groq' como valor válido."""
-    monkeypatch.setenv("AI_PROVIDER", "groq")
-    from saas_radar import config
-
-    importlib.reload(config)
-    assert config.AI_PROVIDER == "groq"
-
-
 def test_groq_api_key_override(monkeypatch):
     """GROQ_API_KEY se lee correctamente desde el entorno."""
     monkeypatch.setenv("GROQ_API_KEY", "test-groq-key-123")
@@ -48,24 +17,6 @@ def test_groq_api_key_override(monkeypatch):
 
     importlib.reload(config)
     assert config.GROQ_API_KEY == "test-groq-key-123"
-
-
-def test_anthropic_api_key_override(monkeypatch):
-    """ANTHROPIC_API_KEY se lee correctamente desde el entorno."""
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-key")
-    from saas_radar import config
-
-    importlib.reload(config)
-    assert config.ANTHROPIC_API_KEY == "sk-ant-test-key"
-
-
-def test_gemini_api_key_override(monkeypatch):
-    """GEMINI_API_KEY se lee correctamente desde el entorno."""
-    monkeypatch.setenv("GEMINI_API_KEY", "AIzaTest")
-    from saas_radar import config
-
-    importlib.reload(config)
-    assert config.GEMINI_API_KEY == "AIzaTest"
 
 
 def test_db_url_default():
@@ -299,57 +250,19 @@ def test_posts_cap_constants():
     assert config.POSTS_CAP_DEFAULT == 4
 
 
-def test_llm_api_urls_present():
-    """Las URLs de API de los proveedores LLM están presentes."""
+def test_llm_api_url_groq_present():
+    """La URL de la API de Groq está presente."""
     from saas_radar import config
 
-    assert config.ANTHROPIC_API_URL == "https://api.anthropic.com/v1/messages"
-    assert "generativelanguage.googleapis.com" in config.GEMINI_API_URL
     assert "groq.com" in config.GROQ_API_URL
 
 
-def test_claude_model_defaults():
-    """Los modelos de Claude tienen los defaults correctos del legacy."""
+def test_groq_model_present():
+    """GROQ_MODEL está definido."""
     from saas_radar import config
 
-    importlib.reload(config)
-    import os
-
-    if "CLAUDE_EXTRACTION_MODEL" not in os.environ:
-        assert config.CLAUDE_EXTRACTION_MODEL == "claude-haiku-4-5-20251001"
-    if "CLAUDE_SYNTHESIS_MODEL" not in os.environ:
-        assert config.CLAUDE_SYNTHESIS_MODEL == "claude-sonnet-4-6"
-
-
-def test_extraction_provider_empty_string_falls_back_to_groq(monkeypatch):
-    """EXTRACTION_PROVIDER vacío ('') usa el default 'groq', igual que None."""
-    monkeypatch.setenv("EXTRACTION_PROVIDER", "")
-    from saas_radar import config
-
-    importlib.reload(config)
-    assert config.EXTRACTION_PROVIDER == "groq", (
-        f"EXTRACTION_PROVIDER='' debe caer en 'groq', got '{config.EXTRACTION_PROVIDER}'"
-    )
-
-
-def test_extraction_provider_env_override(monkeypatch):
-    """EXTRACTION_PROVIDER se lee correctamente cuando tiene valor no vacío."""
-    monkeypatch.setenv("EXTRACTION_PROVIDER", "gemini")
-    from saas_radar import config
-
-    importlib.reload(config)
-    assert config.EXTRACTION_PROVIDER == "gemini"
-
-
-def test_ai_provider_empty_string_falls_back_to_claude(monkeypatch):
-    """AI_PROVIDER vacío ('') usa el default 'claude', igual que None."""
-    monkeypatch.setenv("AI_PROVIDER", "")
-    from saas_radar import config
-
-    importlib.reload(config)
-    assert config.AI_PROVIDER == "claude", (
-        f"AI_PROVIDER='' debe caer en 'claude', got '{config.AI_PROVIDER}'"
-    )
+    assert isinstance(config.GROQ_MODEL, str)
+    assert len(config.GROQ_MODEL) > 0
 
 
 def test_no_print_on_import(capsys):

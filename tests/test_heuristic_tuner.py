@@ -115,7 +115,7 @@ def test_schema_valido_genera_sugerencias(tmp_path):
     top_df = make_top_posts_df()
 
     with patch("saas_radar.agents.heuristic_tuner.call_llm", return_value=_VALID_LLM_RESPONSE):
-        result = generate_heuristic_suggestions(meta_path, top_df, provider="claude")
+        result = generate_heuristic_suggestions(meta_path, top_df)
 
     # Las queries y subreddits devueltos por el LLM que NO están en config
     assert "new_queries" in result
@@ -152,7 +152,7 @@ def test_dedup_no_incluye_query_existente_en_config(tmp_path):
     }
 
     with patch("saas_radar.agents.heuristic_tuner.call_llm", return_value=llm_response):
-        result = generate_heuristic_suggestions(meta_path, top_df, provider="claude")
+        result = generate_heuristic_suggestions(meta_path, top_df)
 
     queries = [q["query"] for q in result["new_queries"]]
     assert "I use Excel to track" not in queries
@@ -175,7 +175,7 @@ def test_dedup_no_incluye_subreddit_existente_en_config(tmp_path):
     }
 
     with patch("saas_radar.agents.heuristic_tuner.call_llm", return_value=llm_response):
-        result = generate_heuristic_suggestions(meta_path, top_df, provider="claude")
+        result = generate_heuristic_suggestions(meta_path, top_df)
 
     subs = [s["name"] for s in result["new_subreddits"]]
     assert "zapier" not in subs
@@ -198,7 +198,7 @@ def test_dedup_no_incluye_frase_existente_en_config(tmp_path):
     }
 
     with patch("saas_radar.agents.heuristic_tuner.call_llm", return_value=llm_response):
-        result = generate_heuristic_suggestions(meta_path, top_df, provider="claude")
+        result = generate_heuristic_suggestions(meta_path, top_df)
 
     phrases = [p["phrase"] for p in result["new_phrases"]]
     assert "i use excel to" not in phrases
@@ -216,7 +216,7 @@ def test_dry_run_no_llama_a_persist(tmp_path):
     with patch("saas_radar.agents.heuristic_tuner.call_llm", return_value=_VALID_LLM_RESPONSE), \
          patch("saas_radar.agents.heuristic_tuner.persist_heuristic_suggestions") as mock_persist:
         from saas_radar.agents.heuristic_tuner import main
-        exit_code = main(["--meta-json", meta_path, "--provider", "claude", "--dry-run"])
+        exit_code = main(["--meta-json", meta_path, "--dry-run"])
 
     assert exit_code == 0
     mock_persist.assert_not_called()
@@ -303,7 +303,7 @@ def test_schema_invalido_devuelve_vacio_sin_excepcion(tmp_path):
 
     for bad_resp in bad_responses:
         with patch("saas_radar.agents.heuristic_tuner.call_llm", return_value=bad_resp):
-            result = generate_heuristic_suggestions(meta_path, top_df, provider="claude")
+            result = generate_heuristic_suggestions(meta_path, top_df)
         assert result == {"new_queries": [], "new_subreddits": [], "new_phrases": []}, \
             f"Esperaba dict vacío para respuesta: {bad_resp!r}"
 
@@ -312,7 +312,7 @@ def test_meta_json_inexistente_devuelve_vacio():
     """Meta-JSON que no existe devuelve dict vacío sin excepción."""
     top_df = make_top_posts_df()
     with patch("saas_radar.agents.heuristic_tuner.call_llm") as mock_llm:
-        result = generate_heuristic_suggestions("/nonexistent/path.json", top_df, provider="claude")
+        result = generate_heuristic_suggestions("/nonexistent/path.json", top_df)
     mock_llm.assert_not_called()
     assert result == {"new_queries": [], "new_subreddits": [], "new_phrases": []}
 

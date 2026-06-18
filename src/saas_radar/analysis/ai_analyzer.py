@@ -11,7 +11,6 @@ from typing import Any
 
 import pandas as pd
 
-from saas_radar import config
 from saas_radar.analysis.data_loader import load_pain_posts
 from saas_radar.analysis.extraction import (
     DEEP_EXTRACTION_THRESHOLD,
@@ -139,7 +138,6 @@ def run_ai_analysis(
     min_score: float = 5.0,
     top_n: int = 50,
     post_age_days: int = 365,
-    provider: str = "claude",
     use_cached_extractions: bool = False,
     extractions_cache_path: str = "extractions_cache.json",
     output_path: str = "data/runs/",
@@ -160,7 +158,6 @@ def run_ai_analysis(
         min_score: Score mínimo de Reddit para filtrar posts.
         top_n: Número máximo de posts a analizar.
         post_age_days: Antigüedad máxima de posts en días.
-        provider: Proveedor LLM ("claude", "gemini", "groq").
         use_cached_extractions: Si True, salta la extracción si existe el cache.
         extractions_cache_path: Ruta del archivo JSON de cache.
         output_path: Directorio donde guardar los resultados JSON.
@@ -172,9 +169,6 @@ def run_ai_analysis(
     db_url = f"sqlite:///{db_path}"
     start_time = time.time()
     timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-
-    # Nivel de entrada: única lectura de config.* permitida (architecture.md §3)
-    extraction_provider = config.EXTRACTION_PROVIDER
 
     # ── Paso 1: init_db ───────────────────────────────────────────────────────
     init_db(db_url)
@@ -199,7 +193,7 @@ def run_ai_analysis(
                 "status": "failed",
                 "duration_sec": int(time.time() - start_time),
                 "error_message": "Sin posts tras el filtro",
-                "ai_provider": provider,
+                "ai_provider": "groq",
             },
             opportunities=[],
             db_url=db_url,
@@ -226,9 +220,9 @@ def run_ai_analysis(
             all_extractions: list[dict] = json.loads(cache_p.read_text(encoding="utf-8"))
         except Exception as exc:
             logger.warning("Cache corrupto (%s) — re-extrayendo", exc)
-            all_extractions = _extract_and_cache(posts_list, extractions_cache_path, extraction_provider=extraction_provider)
+            all_extractions = _extract_and_cache(posts_list, extractions_cache_path)
     else:
-        all_extractions = _extract_and_cache(posts_list, extractions_cache_path, extraction_provider=extraction_provider)
+        all_extractions = _extract_and_cache(posts_list, extractions_cache_path)
 
     valid_extractions = _clean_extractions(all_extractions)
     logger.info("Extracciones válidas: %d / %d", len(valid_extractions), len(all_extractions))
@@ -248,7 +242,7 @@ def run_ai_analysis(
                 "status": "failed",
                 "duration_sec": int(time.time() - start_time),
                 "error_message": f"Solo {len(valid_extractions)} extraccion(es) válida(s) (mínimo 2 para RULE 1)",
-                "ai_provider": provider,
+                "ai_provider": "groq",
             },
             opportunities=[],
             db_url=db_url,
@@ -267,18 +261,8 @@ def run_ai_analysis(
     logger.info("Construyendo prompt de síntesis para %d extracciones...", len(valid_extractions))
     prompt, ordered_extractions = build_synthesis_prompt(valid_extractions)
 
-    logger.info("Llamando al LLM (%s) para síntesis...", provider)
-    raw = call_llm(prompt, max_tokens=4096, phase="synthesis", provider=provider)
-
-    if raw is None:
-        # Intentar con el provider de respaldo antes de abortar
-        fallback_provider = config.SYNTHESIS_PROVIDER_FALLBACK
-        if fallback_provider and fallback_provider != provider:
-            logger.info("Síntesis falló con %s, reintentando con fallback %s...", provider, fallback_provider)
-            raw = call_llm(prompt, max_tokens=4096, phase="synthesis", provider=fallback_provider)
-            if raw is not None:
-                provider = f"{provider}→{fallback_provider}"
-                logger.info("Fallback de síntesis exitoso con %s", fallback_provider)
+    logger.info("Llamando al LLM (groq) para síntesis...")
+    raw = call_llm(prompt, max_tokens=4096)
 
     if raw is None:
         logger.error("LLM devolvió None en síntesis. Abortando.")
@@ -291,7 +275,7 @@ def run_ai_analysis(
                 "status": "failed",
                 "duration_sec": int(time.time() - start_time),
                 "error_message": "LLM devolvió None en síntesis",
-                "ai_provider": provider,
+                "ai_provider": "groq",
             },
             opportunities=[],
             db_url=db_url,
@@ -338,7 +322,7 @@ def run_ai_analysis(
             "json_path": json_path,
             "status": status,
             "duration_sec": int(time.time() - start_time),
-            "ai_provider": provider,
+            "ai_provider": "groq",
         },
         opportunities=serialized_opps,
         db_url=db_url,
@@ -361,7 +345,7 @@ def run_ai_analysis(
 
 
 def _extract_and_cache(
-    posts_list: list[pd.Series], cache_path: str, extraction_provider: str = "claude"
+    posts_list: list[pd.Series], cache_path: str
 ) -> list[dict]:
     """Ejecuta la extracción y guarda el resultado en cache.
 
@@ -369,30 +353,23 @@ def _extract_and_cache(
     - len(posts) <= threshold → extract_problem_deep por cada post.
     - len(posts) > threshold → run_batch_extraction en batches de 5.
 
-    extraction_provider se recibe como argumento explícito desde run_ai_analysis,
-    que es el único nivel autorizado para leer config.* (architecture.md §3).
-    Esto permite usar Groq (sin rate limit severo) para extracción y el provider
-    configurado (Gemini/Claude) para síntesis.
-
     Siempre llama a _save_extractions_cache tras la extracción, incluso
     si el resultado está vacío (el cache defensivo decide si sobrescribe).
     """
     if len(posts_list) <= DEEP_EXTRACTION_THRESHOLD:
         logger.info(
-            "Modo deep (N=%d <= %d): extracción post a post con provider=%s",
+            "Modo deep (N=%d <= %d): extracción post a post con groq",
             len(posts_list),
             DEEP_EXTRACTION_THRESHOLD,
-            extraction_provider,
         )
-        extractions = [extract_problem_deep(row, provider=extraction_provider) for row in posts_list]
+        extractions = [extract_problem_deep(row) for row in posts_list]
     else:
         logger.info(
-            "Modo batch (N=%d > %d): extracción en batches de 5 con provider=%s",
+            "Modo batch (N=%d > %d): extracción en batches de 5 con groq",
             len(posts_list),
             DEEP_EXTRACTION_THRESHOLD,
-            extraction_provider,
         )
-        extractions = run_batch_extraction(posts_list, provider=extraction_provider)
+        extractions = run_batch_extraction(posts_list)
 
     _save_extractions_cache(extractions, cache_path)
     return extractions

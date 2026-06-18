@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from unittest.mock import patch
 
@@ -12,23 +11,11 @@ import respx
 from saas_radar import config
 from saas_radar.analysis.llm_clients import (
     _parse_json_payload,
-    call_claude,
-    call_gemini,
     call_groq,
     call_llm,
 )
 
 # ── Fixtures de respuesta ────────────────────────────────────────────────────
-
-CLAUDE_OK_BODY = {
-    "content": [{"text": '{"result": "ok"}'}],
-}
-
-GEMINI_OK_BODY = {
-    "candidates": [
-        {"content": {"parts": [{"text": '{"result": "ok"}'}]}, "finishReason": "STOP"}
-    ]
-}
 
 GROQ_OK_BODY = {
     "choices": [{"message": {"content": '{"result": "ok"}'}}]
@@ -70,103 +57,6 @@ def test_parse_json_payload_invalid_returns_none():
 def test_parse_json_payload_empty_fence_no_json():
     """Devuelve None si los fences no contienen JSON válido."""
     result = _parse_json_payload("```\nhola mundo\n```")
-    assert result is None
-
-
-# ── Tests de call_claude ─────────────────────────────────────────────────────
-
-
-@respx.mock
-def test_call_claude_200_ok():
-    """200 OK: parsea y devuelve el dict correctamente."""
-    respx.post("https://api.anthropic.com/v1/messages").mock(
-        return_value=httpx.Response(200, json=CLAUDE_OK_BODY)
-    )
-    with patch.object(config, "ANTHROPIC_API_KEY", "test-key"):
-        result = call_claude("prompt de prueba", max_retries=1)
-    assert result == {"result": "ok"}
-
-
-@respx.mock
-def test_call_claude_429_sleeps_and_retries():
-    """429 con header retry-after: hace sleep y reintenta."""
-    route = respx.post("https://api.anthropic.com/v1/messages")
-    route.side_effect = [
-        httpx.Response(429, headers={"retry-after": "1"}, json={}),
-        httpx.Response(200, json=CLAUDE_OK_BODY),
-    ]
-    with patch.object(config, "ANTHROPIC_API_KEY", "test-key"):
-        with patch("time.sleep") as mock_sleep:
-            result = call_claude("prompt", max_retries=3)
-    assert result == {"result": "ok"}
-    # Verificar que sleep fue llamado con 1 segundo (el valor del header)
-    mock_sleep.assert_called_once_with(1)
-
-
-@respx.mock
-def test_call_claude_500_exhausts_retries():
-    """500 repetido max_retries veces → devuelve None."""
-    respx.post("https://api.anthropic.com/v1/messages").mock(
-        return_value=httpx.Response(500, text="Internal Server Error")
-    )
-    with patch.object(config, "ANTHROPIC_API_KEY", "test-key"):
-        with patch("time.sleep"):
-            result = call_claude("prompt", max_retries=3)
-    assert result is None
-
-
-@respx.mock
-def test_call_claude_no_api_key_returns_none():
-    """Sin API key devuelve None sin hacer llamada HTTP."""
-    with patch.object(config, "ANTHROPIC_API_KEY", ""):
-        result = call_claude("prompt", max_retries=1)
-    assert result is None
-
-
-# ── Tests de call_gemini ─────────────────────────────────────────────────────
-
-
-@respx.mock
-def test_call_gemini_200_ok():
-    """200 OK: parsea estructura candidates[0].content.parts[0].text."""
-    respx.post(url__startswith="https://generativelanguage.googleapis.com").mock(
-        return_value=httpx.Response(200, json=GEMINI_OK_BODY)
-    )
-    with patch.object(config, "GEMINI_API_KEY", "test-key"):
-        result = call_gemini("prompt de prueba", max_retries=1)
-    assert result == {"result": "ok"}
-
-
-@respx.mock
-def test_call_gemini_429_retry_delay_sleeps_and_retries():
-    """429 con retryDelay en error.details: hace sleep y reintenta."""
-    error_body = {
-        "error": {
-            "details": [{"retryDelay": "1s"}]
-        }
-    }
-    route = respx.post(url__startswith="https://generativelanguage.googleapis.com")
-    route.side_effect = [
-        httpx.Response(429, json=error_body),
-        httpx.Response(200, json=GEMINI_OK_BODY),
-    ]
-    with patch.object(config, "GEMINI_API_KEY", "test-key"):
-        with patch("time.sleep") as mock_sleep:
-            result = call_gemini("prompt", max_retries=3)
-    assert result == {"result": "ok"}
-    # 1s del retryDelay + 1s de margen = 2s
-    mock_sleep.assert_called_once_with(2)
-
-
-@respx.mock
-def test_call_gemini_500_exhausts_retries():
-    """500 repetido → devuelve None tras agotar retries."""
-    respx.post(url__startswith="https://generativelanguage.googleapis.com").mock(
-        return_value=httpx.Response(500, text="Service Error")
-    )
-    with patch.object(config, "GEMINI_API_KEY", "test-key"):
-        with patch("time.sleep"):
-            result = call_gemini("prompt", max_retries=3)
     assert result is None
 
 
@@ -219,160 +109,31 @@ def test_call_groq_500_exhausts_retries():
 
 
 @respx.mock
-def test_call_llm_synthesis_uses_synthesis_model():
-    """phase='synthesis' manda CLAUDE_SYNTHESIS_MODEL en el body."""
-    captured_body: dict = {}
-
-    def capture_request(request):
-        captured_body.update(json.loads(request.content))
-        return httpx.Response(200, json=CLAUDE_OK_BODY)
-
-    respx.post("https://api.anthropic.com/v1/messages").mock(side_effect=capture_request)
-
-    with patch.object(config, "ANTHROPIC_API_KEY", "test-key"):
-        result = call_llm("prompt", provider="claude", phase="synthesis", max_retries=1)
-
-    assert result == {"result": "ok"}
-    assert captured_body.get("model") == config.CLAUDE_SYNTHESIS_MODEL
-
-
-@respx.mock
-def test_call_llm_extraction_uses_extraction_model():
-    """phase='extraction' manda CLAUDE_EXTRACTION_MODEL en el body."""
-    captured_body: dict = {}
-
-    def capture_request(request):
-        captured_body.update(json.loads(request.content))
-        return httpx.Response(200, json=CLAUDE_OK_BODY)
-
-    respx.post("https://api.anthropic.com/v1/messages").mock(side_effect=capture_request)
-
-    with patch.object(config, "ANTHROPIC_API_KEY", "test-key"):
-        result = call_llm("prompt", provider="claude", phase="extraction", max_retries=1)
-
-    assert result == {"result": "ok"}
-    assert captured_body.get("model") == config.CLAUDE_EXTRACTION_MODEL
-
-
-@respx.mock
-def test_call_llm_provider_gemini_routes_correctly():
-    """provider='gemini' enruta a call_gemini."""
-    respx.post(url__startswith="https://generativelanguage.googleapis.com").mock(
-        return_value=httpx.Response(200, json=GEMINI_OK_BODY)
-    )
-    with patch.object(config, "GEMINI_API_KEY", "test-key"):
-        result = call_llm("prompt", provider="gemini", max_retries=1)
-    assert result == {"result": "ok"}
-
-
-@respx.mock
-def test_call_llm_provider_groq_routes_correctly():
-    """provider='groq' enruta a call_groq."""
+def test_call_llm_delegates_to_groq():
+    """call_llm sin argumentos adicionales enruta a call_groq."""
     respx.post("https://api.groq.com/openai/v1/chat/completions").mock(
         return_value=httpx.Response(200, json=GROQ_OK_BODY)
     )
     with patch.object(config, "GROQ_API_KEY", "test-key"):
-        result = call_llm("prompt", provider="groq", max_retries=1)
+        result = call_llm("prompt", max_retries=1)
     assert result == {"result": "ok"}
 
 
-def test_call_llm_does_not_mutate_config_ai_provider():
-    """Llamar a call_llm no muta config.AI_PROVIDER (cambio clave vs legacy)."""
-    original_provider = config.AI_PROVIDER
-
-    # Simulamos una llamada que falla (sin API key real) para no necesitar mocks HTTP
-    with patch.object(config, "ANTHROPIC_API_KEY", ""):
-        call_llm("prompt", provider="claude", max_retries=1)
-
-    # config.AI_PROVIDER debe seguir siendo exactamente el mismo objeto/valor
-    assert config.AI_PROVIDER == original_provider
-
-
-def test_call_llm_unknown_provider_returns_none():
-    """Provider desconocido devuelve None sin lanzar excepción."""
-    result = call_llm("prompt", provider="unknown_provider", max_retries=1)
-    assert result is None
-
-
-# ── Hardening Gemini (feature #23) ───────────────────────────────────────────
-
-
 @respx.mock
-def test_call_gemini_envelope_without_candidates_logs_warning_and_returns_none(caplog):
-    """200 OK pero JSON sin 'candidates' → WARNING + None (no crash)."""
-    malformed_body = {"foo": "bar"}
-    respx.post(url__startswith="https://generativelanguage.googleapis.com").mock(
-        return_value=httpx.Response(200, json=malformed_body)
-    )
-    with patch.object(config, "GEMINI_API_KEY", "test-key"):
-        with caplog.at_level(logging.WARNING, logger="saas_radar.analysis.llm_clients"):
-            result = call_gemini("prompt", max_retries=1)
-    assert result is None
-    assert any("sin candidates" in rec.message for rec in caplog.records), caplog.text
-    # El warning incluye el body truncado para debug post-mortem.
-    assert any("body[:500]" in rec.message for rec in caplog.records), caplog.text
+def test_call_llm_passes_max_tokens_to_groq():
+    """call_llm transmite max_tokens al body de la request."""
+    captured_body: dict = {}
 
+    import json
 
-@respx.mock
-def test_call_gemini_envelope_with_text_unparseable_logs_warning_and_returns_none(caplog):
-    """200 OK con text que NO es JSON parseable → WARNING + None."""
-    body = {
-        "candidates": [
-            {"content": {"parts": [{"text": "esto no es json en absoluto"}]}, "finishReason": "STOP"}
-        ]
-    }
-    respx.post(url__startswith="https://generativelanguage.googleapis.com").mock(
-        return_value=httpx.Response(200, json=body)
-    )
-    with patch.object(config, "GEMINI_API_KEY", "test-key"):
-        with caplog.at_level(logging.WARNING, logger="saas_radar.analysis.llm_clients"):
-            result = call_gemini("prompt", max_retries=1)
-    assert result is None
-    assert any("no parseable como JSON" in rec.message for rec in caplog.records), caplog.text
+    def capture_request(request):
+        captured_body.update(json.loads(request.content))
+        return httpx.Response(200, json=GROQ_OK_BODY)
 
+    respx.post("https://api.groq.com/openai/v1/chat/completions").mock(side_effect=capture_request)
 
-@respx.mock
-def test_call_gemini_envelope_valid_text_without_results_key_returns_parsed_dict():
-    """200 OK con envelope válido y text JSON parseable ('{"foo":"bar"}') → devuelve el dict.
+    with patch.object(config, "GROQ_API_KEY", "test-key"):
+        result = call_llm("prompt", max_tokens=1024, max_retries=1)
 
-    Decisión documentada en progress/impl_extraction_gemini_hardening.md:
-    call_gemini valida sólo la estructura del envelope Gemini (candidates →
-    content → parts → text). La validación de la shape del prompt
-    (presencia de 'results' por ejemplo) vive en el caller
-    (extract_problems_batch), porque depende del prompt y no del transporte.
-    Aquí verificamos que el envelope se acepta y que el dict parseado se
-    devuelve tal cual, aunque no tenga 'results'. El test paralelo en
-    test_extraction.py:test_extract_problems_batch_logs_warning_when_results_key_missing
-    verifica que el caller loguea WARNING.
-    """
-    body = {
-        "candidates": [
-            {"content": {"parts": [{"text": '{"foo": "bar"}'}]}, "finishReason": "STOP"}
-        ]
-    }
-    respx.post(url__startswith="https://generativelanguage.googleapis.com").mock(
-        return_value=httpx.Response(200, json=body)
-    )
-    with patch.object(config, "GEMINI_API_KEY", "test-key"):
-        result = call_gemini("prompt", max_retries=1)
-    assert result == {"foo": "bar"}
-
-
-@respx.mock
-def test_call_gemini_envelope_with_empty_parts_logs_warning(caplog):
-    """200 OK con candidates[0].content.parts vacío → WARNING + None."""
-    body = {
-        "candidates": [
-            {"content": {"parts": []}, "finishReason": "MAX_TOKENS"}
-        ]
-    }
-    respx.post(url__startswith="https://generativelanguage.googleapis.com").mock(
-        return_value=httpx.Response(200, json=body)
-    )
-    with patch.object(config, "GEMINI_API_KEY", "test-key"):
-        with caplog.at_level(logging.WARNING, logger="saas_radar.analysis.llm_clients"):
-            result = call_gemini("prompt", max_retries=1)
-    assert result is None
-    assert any("sin parts" in rec.message for rec in caplog.records), caplog.text
-    # finishReason se incluye para diagnóstico.
-    assert any("MAX_TOKENS" in rec.message for rec in caplog.records), caplog.text
+    assert result == {"result": "ok"}
+    assert captured_body.get("max_tokens") == 1024

@@ -19,12 +19,11 @@ GTM_DEFAULT_MIN_PRIORITY = 7
 _REQUIRED_KEYS = {"viability_desperation", "viability_build_ease", "viability_scalability"}
 
 
-def _generate_gtm(opp: dict, provider: str) -> dict | None:
+def _generate_gtm(opp: dict) -> dict | None:
     """Genera el payload GTM para una oportunidad llamando al LLM.
 
     Llama a build_gtm_prompt para construir el prompt, luego a call_llm con
-    max_tokens=2000 y phase='synthesis'. Parsea la respuesta con
-    _parse_json_payload.
+    max_tokens=2000. Parsea la respuesta con _parse_json_payload.
 
     Calcula viability_total = viability_desperation + viability_build_ease +
     viability_scalability. Este cálculo lo hace Python (no el LLM) para
@@ -37,7 +36,7 @@ def _generate_gtm(opp: dict, provider: str) -> dict | None:
     """
     prompt = build_gtm_prompt(opp)
 
-    raw = call_llm(prompt, max_tokens=2000, phase="synthesis", provider=provider)
+    raw = call_llm(prompt, max_tokens=2000)
     if raw is None:
         logger.error("_generate_gtm: call_llm devolvió None para opp id=%s", opp.get("id"))
         return None
@@ -75,7 +74,6 @@ def _generate_gtm(opp: dict, provider: str) -> dict | None:
 def _process_opportunity(
     opp_id: int,
     opp: dict,
-    provider: str,
     force: bool = False,
     db_url: str | None = None,
 ) -> str:
@@ -106,7 +104,7 @@ def _process_opportunity(
                 )
         logger.info("GTM fila eliminada para opp_id=%d (--force)", opp_id)
 
-    payload = _generate_gtm(opp, provider)
+    payload = _generate_gtm(opp)
 
     if payload is None:
         # LLM falló: persistir fila mínima con status="failed" y scores NULL.
@@ -142,7 +140,6 @@ def _process_opportunity(
 
 def run_all_pending(
     min_priority: int = GTM_DEFAULT_MIN_PRIORITY,
-    provider: str = "claude",
     force: bool = False,
     db_url: str | None = None,
 ) -> dict:
@@ -179,7 +176,7 @@ def run_all_pending(
         opp_id = int(row["id"])
         opp = row.to_dict()
         try:
-            status = _process_opportunity(opp_id, opp, provider=provider, force=force, db_url=db_url)
+            status = _process_opportunity(opp_id, opp, force=force, db_url=db_url)
             counts[status] = counts.get(status, 0) + 1
         except Exception as e:
             logger.error("run_all_pending: error inesperado procesando opp_id=%d: %s", opp_id, e)
@@ -201,7 +198,6 @@ Ejemplos:
   python -m saas_radar.agents.gtm_agent --opp-id 3
   python -m saas_radar.agents.gtm_agent --all-pending
   python -m saas_radar.agents.gtm_agent --all-pending --min-priority 5
-  python -m saas_radar.agents.gtm_agent --all-pending --provider gemini
   python -m saas_radar.agents.gtm_agent --opp-id 3 --force
         """,
     )
@@ -214,7 +210,6 @@ Ejemplos:
         default=GTM_DEFAULT_MIN_PRIORITY,
         help=f"Priority score mínimo para --all-pending (default: {GTM_DEFAULT_MIN_PRIORITY})",
     )
-    parser.add_argument("--provider", type=str, default="claude", help="Proveedor LLM (default: claude)")
     parser.add_argument("--db-url", type=str, default=None, help="URL de la BD SQLite (default: data/saas.db)")
 
     args = parser.parse_args()
@@ -236,14 +231,13 @@ Ejemplos:
         else:
             opp = dict(row._mapping)
             status = _process_opportunity(
-                args.opp_id, opp, provider=args.provider, force=args.force, db_url=args.db_url
+                args.opp_id, opp, force=args.force, db_url=args.db_url
             )
             print(f"GTM opp_id={args.opp_id}: {status}")
 
     elif args.all_pending:
         result = run_all_pending(
             min_priority=args.min_priority,
-            provider=args.provider,
             force=args.force,
             db_url=args.db_url,
         )

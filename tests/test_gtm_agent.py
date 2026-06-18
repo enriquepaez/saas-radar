@@ -74,7 +74,7 @@ def test_generate_gtm_returns_none_if_llm_fails():
     """_generate_gtm devuelve None si call_llm retorna None."""
     opp = {"id": 1, "product_name": "Test", "priority_score": 8}
     with patch("saas_radar.agents.gtm_agent.call_llm", return_value=None):
-        result = _generate_gtm(opp, provider="claude")
+        result = _generate_gtm(opp)
     assert result is None
 
 
@@ -85,7 +85,7 @@ def test_generate_gtm_calculates_viability_total(llm_payload):
 
     raw_response = json.dumps(llm_payload)
     with patch("saas_radar.agents.gtm_agent.call_llm", return_value=raw_response):
-        result = _generate_gtm(opp, provider="claude")
+        result = _generate_gtm(opp)
 
     assert result is not None
     # 8 + 7 + 6 = 21
@@ -98,7 +98,7 @@ def test_generate_gtm_returns_none_if_invalid_schema():
     # JSON válido pero sin campos de viabilidad.
     invalid_response = '{"elevator_pitch": "algo"}'
     with patch("saas_radar.agents.gtm_agent.call_llm", return_value=invalid_response):
-        result = _generate_gtm(opp, provider="claude")
+        result = _generate_gtm(opp)
     assert result is None
 
 
@@ -106,7 +106,7 @@ def test_generate_gtm_returns_none_if_parse_fails():
     """_generate_gtm devuelve None si _parse_json_payload no puede parsear."""
     opp = {"id": 1, "product_name": "Test"}
     with patch("saas_radar.agents.gtm_agent.call_llm", return_value="texto plano sin JSON"):
-        result = _generate_gtm(opp, provider="claude")
+        result = _generate_gtm(opp)
     assert result is None
 
 
@@ -121,7 +121,7 @@ def test_generate_gtm_handles_string_scores():
         "viability_scalability": 6,
     }
     with patch("saas_radar.agents.gtm_agent.call_llm", return_value=json.dumps(bad_payload)):
-        result = _generate_gtm(opp, provider="claude")
+        result = _generate_gtm(opp)
     assert result is None
 
 
@@ -132,7 +132,7 @@ def test_generate_gtm_opp_without_evidence_quotes(llm_payload):
 
     raw_response = json.dumps(llm_payload)
     with patch("saas_radar.agents.gtm_agent.call_llm", return_value=raw_response):
-        result = _generate_gtm(opp, provider="claude")
+        result = _generate_gtm(opp)
     assert result is not None
     assert "viability_total" in result
 
@@ -150,7 +150,7 @@ def test_process_opportunity_generated(tmp_db, llm_payload):
 
     raw = json.dumps(llm_payload)
     with patch("saas_radar.agents.gtm_agent.call_llm", return_value=raw):
-        status = _process_opportunity(1, opp, provider="claude", db_url=tmp_db)
+        status = _process_opportunity(1, opp, db_url=tmp_db)
 
     assert status == "generated"
     assert has_gtm(1, db_url=tmp_db)
@@ -173,7 +173,7 @@ def test_process_opportunity_skipped_low_viability(tmp_db):
     import json
 
     with patch("saas_radar.agents.gtm_agent.call_llm", return_value=json.dumps(low_payload)):
-        status = _process_opportunity(1, opp, provider="claude", db_url=tmp_db)
+        status = _process_opportunity(1, opp, db_url=tmp_db)
 
     assert status == "skipped_low_viability"
     gtm = load_gtm(1, db_url=tmp_db)
@@ -188,7 +188,7 @@ def test_process_opportunity_failed_llm(tmp_db):
     _insert_opp(tmp_db, 1)
     opp = {"id": 1, "product_name": "Test"}
     with patch("saas_radar.agents.gtm_agent.call_llm", return_value=None):
-        status = _process_opportunity(1, opp, provider="claude", db_url=tmp_db)
+        status = _process_opportunity(1, opp, db_url=tmp_db)
 
     assert status == "failed"
     gtm = load_gtm(1, db_url=tmp_db)
@@ -204,12 +204,12 @@ def test_process_opportunity_skipped_existing_without_force(tmp_db, llm_payload)
 
     raw = json.dumps(llm_payload)
     with patch("saas_radar.agents.gtm_agent.call_llm", return_value=raw):
-        _process_opportunity(1, opp, provider="claude", db_url=tmp_db)
+        _process_opportunity(1, opp, db_url=tmp_db)
 
     # Segunda llamada sin force: debe devolver skipped_existing SIN llamar a LLM
     call_count = []
     with patch("saas_radar.agents.gtm_agent.call_llm", side_effect=lambda *a, **kw: call_count.append(1) or raw):
-        status = _process_opportunity(1, opp, provider="claude", force=False, db_url=tmp_db)
+        status = _process_opportunity(1, opp, force=False, db_url=tmp_db)
 
     assert status == "skipped_existing"
     assert len(call_count) == 0  # LLM no fue llamado
@@ -225,11 +225,11 @@ def test_process_opportunity_force_replaces(tmp_db, llm_payload):
 
     # Primera inserción
     with patch("saas_radar.agents.gtm_agent.call_llm", return_value=raw):
-        _process_opportunity(1, opp, provider="claude", db_url=tmp_db)
+        _process_opportunity(1, opp, db_url=tmp_db)
 
     # Segunda con force=True
     with patch("saas_radar.agents.gtm_agent.call_llm", return_value=raw):
-        status = _process_opportunity(1, opp, provider="claude", force=True, db_url=tmp_db)
+        status = _process_opportunity(1, opp, force=True, db_url=tmp_db)
 
     assert status == "generated"
     # Solo debe haber 1 fila (no duplicados tras force)
@@ -252,7 +252,7 @@ def test_run_all_pending_filters_by_priority(tmp_db, llm_payload):
 
     raw = json.dumps(llm_payload)
     with patch("saas_radar.agents.gtm_agent.call_llm", return_value=raw):
-        result = run_all_pending(min_priority=7, provider="claude", db_url=tmp_db)
+        result = run_all_pending(min_priority=7, db_url=tmp_db)
 
     # Opp 1 procesada, opp 2 ignorada
     assert result["generated"] == 1
@@ -268,7 +268,7 @@ def test_run_all_pending_returns_counts(tmp_db, llm_payload):
 
     raw = json.dumps(llm_payload)
     with patch("saas_radar.agents.gtm_agent.call_llm", return_value=raw):
-        result = run_all_pending(min_priority=7, provider="claude", db_url=tmp_db)
+        result = run_all_pending(min_priority=7, db_url=tmp_db)
 
     assert "generated" in result
     assert "skipped_low_viability" in result
@@ -284,7 +284,7 @@ def test_run_all_pending_skips_discarded(tmp_db, llm_payload):
 
     raw = json.dumps(llm_payload)
     with patch("saas_radar.agents.gtm_agent.call_llm", return_value=raw):
-        result = run_all_pending(min_priority=7, provider="claude", db_url=tmp_db)
+        result = run_all_pending(min_priority=7, db_url=tmp_db)
 
     assert result["generated"] == 0
     assert not has_gtm(1, db_url=tmp_db)
@@ -292,7 +292,7 @@ def test_run_all_pending_skips_discarded(tmp_db, llm_payload):
 
 def test_run_all_pending_empty_db(tmp_db):
     """BD sin oportunidades devuelve conteos en 0."""
-    result = run_all_pending(min_priority=7, provider="claude", db_url=tmp_db)
+    result = run_all_pending(min_priority=7, db_url=tmp_db)
     assert result == {"generated": 0, "skipped_low_viability": 0, "failed": 0, "skipped_existing": 0}
 
 
@@ -306,11 +306,11 @@ def test_run_all_pending_skipped_existing_counted(tmp_db, llm_payload):
 
     # Primera pasada
     with patch("saas_radar.agents.gtm_agent.call_llm", return_value=raw):
-        run_all_pending(min_priority=7, provider="claude", db_url=tmp_db)
+        run_all_pending(min_priority=7, db_url=tmp_db)
 
     # Segunda pasada sin force
     with patch("saas_radar.agents.gtm_agent.call_llm", return_value=raw):
-        result = run_all_pending(min_priority=7, provider="claude", db_url=tmp_db)
+        result = run_all_pending(min_priority=7, db_url=tmp_db)
 
     assert result["skipped_existing"] == 1
     assert result["generated"] == 0
@@ -339,7 +339,7 @@ def test_run_all_pending_mixed_results(tmp_db, llm_payload):
         return json.dumps(low_payload)  # Segunda opp: baja viabilidad
 
     with patch("saas_radar.agents.gtm_agent.call_llm", side_effect=mock_llm):
-        result = run_all_pending(min_priority=7, provider="claude", db_url=tmp_db)
+        result = run_all_pending(min_priority=7, db_url=tmp_db)
 
     assert result["failed"] == 1
     assert result["skipped_low_viability"] == 1
@@ -355,11 +355,11 @@ def test_run_all_pending_force_regenerates(tmp_db, llm_payload):
 
     # Primera pasada normal
     with patch("saas_radar.agents.gtm_agent.call_llm", return_value=raw):
-        run_all_pending(min_priority=7, provider="claude", db_url=tmp_db)
+        run_all_pending(min_priority=7, db_url=tmp_db)
 
     # Segunda pasada con force
     with patch("saas_radar.agents.gtm_agent.call_llm", return_value=raw):
-        result = run_all_pending(min_priority=7, provider="claude", force=True, db_url=tmp_db)
+        result = run_all_pending(min_priority=7, force=True, db_url=tmp_db)
 
     assert result["generated"] == 1
     assert result["skipped_existing"] == 0
@@ -401,7 +401,7 @@ def test_generate_gtm_includes_evidence_quotes_in_prompt():
 
     with patch("saas_radar.agents.gtm_agent.build_gtm_prompt", side_effect=mock_build):
         with patch("saas_radar.agents.gtm_agent.call_llm", return_value=json.dumps(valid_payload)):
-            result = _generate_gtm(opp, provider="claude")
+            result = _generate_gtm(opp)
 
     assert "opp" in captured
     assert captured["opp"]["id"] == 1
@@ -418,7 +418,7 @@ def test_process_opportunity_exception_in_llm_does_not_propagate(tmp_db):
         # _process_opportunity NO captura excepciones de _generate_gtm.
         # El caller (run_all_pending) sí las captura.
         # Por tanto, testeamos que run_all_pending lo gestiona correctamente.
-        result = run_all_pending(min_priority=0, provider="claude", db_url=tmp_db)
+        result = run_all_pending(min_priority=0, db_url=tmp_db)
 
     # El error se captura en run_all_pending y cuenta como failed
     assert result["failed"] == 1
