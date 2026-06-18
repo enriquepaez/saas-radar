@@ -34,20 +34,20 @@ def test_phase_gtm_prints_result_summary(capsys):
     assert "2 ya existentes" in captured.out
 
 
-def test_phase_gtm_uses_env_provider(monkeypatch, capsys):
-    """phase_gtm respeta AI_PROVIDER del entorno para elegir el provider."""
-    monkeypatch.setenv("AI_PROVIDER", "gemini")
+def test_phase_gtm_calls_run_all_pending(capsys):
+    """phase_gtm llama a run_all_pending sin parámetro provider (siempre groq)."""
+    captured_calls = []
 
-    captured_provider = []
-
-    def mock_run_all_pending(min_priority, provider, **kwargs):
-        captured_provider.append(provider)
-        return {"generated": 0, "skipped_low_viability": 0, "failed": 0, "skipped_existing": 0}
+    def mock_run_all_pending(**kwargs):
+        captured_calls.append(kwargs)
+        return {"generated": 1, "skipped_low_viability": 0, "failed": 0, "skipped_existing": 0}
 
     with patch("saas_radar.agents.gtm_agent.run_all_pending", side_effect=mock_run_all_pending):
         phase_gtm()
 
-    assert captured_provider == ["gemini"]
+    assert len(captured_calls) == 1
+    # provider ya no es un parámetro aceptado
+    assert "provider" not in captured_calls[0]
 
 
 def test_skip_gtm_flag_does_not_import_agent(tmp_path):

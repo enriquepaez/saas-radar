@@ -120,22 +120,24 @@ def test_has_data_branch_checkout(workflow: dict):
 
 
 def test_has_required_env_secrets(workflow: dict):
-    """El job tiene los 9 secrets requeridos como variables de entorno."""
+    """El job tiene los secrets requeridos como variables de entorno."""
     job = workflow["jobs"]["run"]
     env = job.get("env", {})
     required_secrets = [
         "REDDIT_CLIENT_ID",
         "REDDIT_CLIENT_SECRET",
         "REDDIT_USER_AGENT",
-        "ANTHROPIC_API_KEY",
-        "GEMINI_API_KEY",
         "GROQ_API_KEY",
         "TELEGRAM_BOT_TOKEN",
         "TELEGRAM_CHAT_ID",
-        "AI_PROVIDER",
     ]
     for secret in required_secrets:
         assert secret in env, f"Falta secret '{secret}' en env del job"
+
+    # Verificar que los providers eliminados NO están en el env
+    removed_secrets = ["ANTHROPIC_API_KEY", "GEMINI_API_KEY", "AI_PROVIDER", "EXTRACTION_PROVIDER"]
+    for secret in removed_secrets:
+        assert secret not in env, f"Secret eliminado '{secret}' no debería estar en env del job"
 
 
 def test_has_python_setup(workflow: dict):

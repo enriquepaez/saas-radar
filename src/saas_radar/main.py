@@ -157,7 +157,7 @@ def phase_comments(posts_df: pd.DataFrame) -> None:
     save_to_db(comments_df, table_name="reddit_comments")
 
 
-def phase_heuristic_tuner(meta_json_path: str, top_posts_df: pd.DataFrame, provider: str) -> None:
+def phase_heuristic_tuner(meta_json_path: str, top_posts_df: pd.DataFrame) -> None:
     """Fase 4.5: genera y persiste sugerencias heurísticas via LLM.
 
     Envuelta en try/except: si falla, loguea WARNING y el pipeline continúa.
@@ -173,7 +173,6 @@ def phase_heuristic_tuner(meta_json_path: str, top_posts_df: pd.DataFrame, provi
         suggestions = generate_heuristic_suggestions(
             meta_json_path=meta_json_path,
             top_posts_df=top_posts_df,
-            provider=provider,
         )
         db_path = config.DB_URL.replace("sqlite:///", "")
         persist_heuristic_suggestions(suggestions, db_path)
@@ -186,8 +185,7 @@ def phase_gtm(min_priority: int = 7) -> None:
     try:
         from saas_radar.agents.gtm_agent import run_all_pending
 
-        provider = os.getenv("AI_PROVIDER", "claude")
-        result = run_all_pending(min_priority=min_priority, provider=provider)
+        result = run_all_pending(min_priority=min_priority)
         print(
             f"  GTM: {result.get('generated', 0)} generadas, "
             f"{result.get('skipped_low_viability', 0)} baja viabilidad, "
@@ -256,7 +254,6 @@ def run_pipeline(
             output_path=output,
             use_cached_extractions=use_cached_extractions,
             post_age_days=post_age_days,
-            provider=os.getenv("AI_PROVIDER", "claude"),
         )
         print(f"   Análisis IA:     {_fmt(time.time() - t0)}")
         for opp in (ai_result.get("opportunities") or []):
@@ -281,7 +278,6 @@ def run_pipeline(
         phase_heuristic_tuner(
             meta_json_path=meta_json_path,
             top_posts_df=top_posts_df,
-            provider=os.getenv("AI_PROVIDER", "claude"),
         )
 
     if not skip_gtm:

@@ -7,7 +7,6 @@ from typing import Any
 import pandas as pd
 from sqlalchemy import text as sql_text
 
-from saas_radar import config
 from saas_radar.analysis.llm_clients import call_llm
 from saas_radar.config import TEXT_SNIPPET_LEN
 from saas_radar.storage.db import engine
@@ -245,7 +244,7 @@ _NON_SAAS_PAIN_SIGNALS = [
 # ── Funciones de extracción ───────────────────────────────────────────────────
 
 
-def extract_problem_from_post(row: pd.Series, comments: list[str], provider: str = "claude") -> dict[str, Any]:
+def extract_problem_from_post(row: pd.Series, comments: list[str]) -> dict[str, Any]:
     """Extrae el problema de un post individual usando el LLM."""
     title = str(row.get("title", "")).strip()
     text = str(row.get("text", "")).strip()[:TEXT_SNIPPET_LEN]
@@ -263,7 +262,7 @@ def extract_problem_from_post(row: pd.Series, comments: list[str], provider: str
         comments_section=comments_section,
     )
 
-    result = call_llm(prompt, max_tokens=600, phase="extraction", provider=provider)
+    result = call_llm(prompt, max_tokens=600)
     if result is None:
         return {"has_problem": False, "_title": title, "_subreddit": sub}
 
@@ -290,7 +289,7 @@ def _fetch_comments_for_post(post_id: str, limit: int = 15) -> list[str]:
     return [row[0] for row in rows]
 
 
-def extract_problem_deep(row: pd.Series, provider: str = "claude") -> dict[str, Any]:
+def extract_problem_deep(row: pd.Series) -> dict[str, Any]:
     """Extracción profunda: texto completo + comentarios desde BD + prompt enriquecido."""
     title = str(row.get("title", "")).strip()
     text = str(row.get("text", "")).strip()
@@ -310,7 +309,7 @@ def extract_problem_deep(row: pd.Series, provider: str = "claude") -> dict[str, 
         comments_section=comments_section,
     )
 
-    result = call_llm(prompt, max_tokens=800, phase="extraction", provider=provider)
+    result = call_llm(prompt, max_tokens=800)
     if result is None:
         return {"has_problem": False, "_title": title, "_subreddit": sub, "_error": True}
 
@@ -324,7 +323,7 @@ def extract_problem_deep(row: pd.Series, provider: str = "claude") -> dict[str, 
     return result
 
 
-def extract_problems_batch(rows: list[pd.Series], provider: str = "claude") -> list[dict[str, Any]]:
+def extract_problems_batch(rows: list[pd.Series]) -> list[dict[str, Any]]:
     """Extrae problemas de N posts en una sola llamada al LLM."""
     posts_block_parts = []
     for i, row in enumerate(rows, 1):
@@ -339,21 +338,17 @@ def extract_problems_batch(rows: list[pd.Series], provider: str = "claude") -> l
     posts_block = "\n\n".join(posts_block_parts)
     prompt = EXTRACTION_BATCH_PROMPT.format(posts_block=posts_block, n=len(rows))
 
-    result = call_llm(prompt, max_tokens=220 * len(rows), phase="extraction", provider=provider)
+    result = call_llm(prompt, max_tokens=220 * len(rows))
     if not result or "results" not in result:
-        # Logging defensivo (feature #23): truncar a 500 chars la repr del resultado
-        # para que el debug post-mortem de un schema malformado del LLM no
-        # quede ciego (ver progress/audit_gemini_fail.md). Diferenciar entre
-        # None (API fallo) y dict sin clave 'results' (schema malformado).
+        # Logging defensivo: truncar a 500 chars la repr del resultado para debug post-mortem.
+        # Diferenciar entre None (API fallo) y dict sin clave 'results' (schema malformado).
         if result is None:
             logger.warning(
-                "Batch fallo con provider=%s -- call_llm devolvió None (API fallo o schema malformado)",
-                provider,
+                "Batch fallo -- call_llm devolvió None (API fallo o schema malformado)",
             )
         else:
             logger.warning(
-                "Batch fallo con provider=%s -- result sin clave 'results'. repr[:500]=%s",
-                provider,
+                "Batch fallo -- result sin clave 'results'. repr[:500]=%s",
                 repr(result)[:500],
             )
         return [
@@ -393,15 +388,13 @@ def extract_problems_batch(rows: list[pd.Series], provider: str = "claude") -> l
 def _run_batches_with_circuit_breaker(
     posts: list[pd.Series],
     batch_size: int,
-    provider: str,
 ) -> tuple[list[dict[str, Any]], bool]:
     """Loop interno: ejecuta los batches con circuit breaker.
 
     Devuelve (resultados_acumulados, circuit_breaker_triggered).
     `circuit_breaker_triggered` es True si se abortó por superar
     CIRCUIT_BREAKER_THRESHOLD batches consecutivos con todos los items en
-    `_error=True`. Esta separación permite al caller decidir si reintentar
-    con un provider de respaldo (feature #23, EXTRACTION_PROVIDER_FALLBACK).
+    `_error=True`.
     """
     results: list[dict[str, Any]] = []
     consecutive_errors = 0
@@ -409,7 +402,7 @@ def _run_batches_with_circuit_breaker(
 
     for start in range(0, len(posts), batch_size):
         batch = posts[start : start + batch_size]
-        batch_results = extract_problems_batch(batch, provider=provider)
+        batch_results = extract_problems_batch(batch)
         results.extend(batch_results)
 
         if all(item.get("_error") for item in batch_results):
@@ -419,9 +412,8 @@ def _run_batches_with_circuit_breaker(
 
         if consecutive_errors >= CIRCUIT_BREAKER_THRESHOLD:
             logger.error(
-                "Circuit breaker disparado tras %d batches consecutivos con error (provider=%s) — abortando loop",
+                "Circuit breaker disparado tras %d batches consecutivos con error — abortando loop",
                 consecutive_errors,
-                provider,
             )
             triggered = True
             break
@@ -432,59 +424,17 @@ def _run_batches_with_circuit_breaker(
 def run_batch_extraction(
     posts: list[pd.Series],
     batch_size: int = EXTRACTION_BATCH_SIZE,
-    provider: str = "claude",
 ) -> list[dict[str, Any]]:
-    """Procesa posts en batches con circuit breaker tras errores consecutivos.
-
-    Fallback automático (feature #23): si el circuit breaker dispara con un
-    provider != EXTRACTION_PROVIDER_FALLBACK (y el fallback no está vacío),
-    reintenta TODOS los batches desde 0 con el provider de respaldo UNA sola
-    vez. El primer pase queda como log de auditoría; los resultados del
-    segundo pase reemplazan a los del primero porque la unidad de retry es
-    "todos los batches desde 0" (más simple y robusto que mantener un mapa
-    parcial de batches procesados → recuperar solo huérfanos).
-    """
-    results, triggered = _run_batches_with_circuit_breaker(posts, batch_size, provider)
-
-    if not triggered:
-        return results
-
-    fallback = (config.EXTRACTION_PROVIDER_FALLBACK or "").strip().lower()
-    if not fallback or fallback == provider:
-        # Sin fallback configurado o ya estamos en el provider de respaldo.
-        return results
-
-    logger.warning(
-        "Fallback activado: provider=%s disparó circuit breaker. Reintentando los %d posts con provider=%s (UNA sola vez).",
-        provider,
-        len(posts),
-        fallback,
-    )
-    fallback_results, fallback_triggered = _run_batches_with_circuit_breaker(
-        posts, batch_size, fallback
-    )
-
-    if fallback_triggered:
-        logger.error(
-            "Fallback con provider=%s también disparó circuit breaker — abortando extracción",
-            fallback,
-        )
-        # Aun así devolvemos lo que dio el fallback: puede haber resultados
-        # parciales útiles antes del corte (ej. 2 batches buenos + 3 _error).
-    else:
-        logger.info(
-            "Fallback con provider=%s completó la extracción tras circuit breaker del provider original",
-            fallback,
-        )
-
-    return fallback_results
+    """Procesa posts en batches con circuit breaker tras errores consecutivos."""
+    results, _ = _run_batches_with_circuit_breaker(posts, batch_size)
+    return results
 
 
-def extract_problems(posts: list[pd.Series], provider: str = "claude") -> list[dict[str, Any]]:
+def extract_problems(posts: list[pd.Series]) -> list[dict[str, Any]]:
     """Entrada pública: bifurca entre extracción deep y batch según DEEP_EXTRACTION_THRESHOLD."""
     if len(posts) <= DEEP_EXTRACTION_THRESHOLD:
-        return [extract_problem_deep(row, provider=provider) for row in posts]
-    return run_batch_extraction(posts, provider=provider)
+        return [extract_problem_deep(row) for row in posts]
+    return run_batch_extraction(posts)
 
 
 # ── Funciones puras de limpieza ───────────────────────────────────────────────
