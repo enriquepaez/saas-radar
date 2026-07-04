@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import argparse
 import time
-from io import StringIO
-from unittest.mock import MagicMock, patch
+from pathlib import Path
+from unittest.mock import patch
 
 import pandas as pd
 import pytest
@@ -60,7 +60,6 @@ def test_argparse_has_all_required_flags():
 
 
 def test_skip_all_flags_no_exception(tmp_path, capsys):
-    db_url = f"sqlite:///{tmp_path}/test.db"
     with (
         patch("saas_radar.main.init_db") as mock_init,
         patch("saas_radar.main.has_successful_run", return_value=False),
@@ -351,3 +350,44 @@ def test_send_run_summary_receives_correct_mode(has_run, full_scan, expected_mod
     assert call_kwargs is not None
     # send_run_summary se llama con keyword args
     assert call_kwargs.kwargs.get("mode") == expected_mode
+
+
+# ── Test 15: el glob de la fase 4.5 busca en el directorio de output real ─────
+
+
+def test_phase45_glob_finds_meta_json_in_output_dir(tmp_path):
+    """run_pipeline encuentra el meta JSON que run_ai_analysis escribe en su output_path
+    y se lo pasa a phase_heuristic_tuner (la ruta escrita y la buscada coinciden)."""
+    out_dir = tmp_path / "ai_analysis.json"
+    meta_file = out_dir / "20260101_000000_meta.json"
+
+    def fake_run_ai_analysis(**kwargs):
+        # Simula el paso 9 de run_ai_analysis: escribe el meta JSON en output_path
+        out_path = Path(kwargs["output_path"])
+        out_path.mkdir(parents=True, exist_ok=True)
+        (out_path / "20260101_000000_meta.json").write_text("{}", encoding="utf-8")
+        return {
+            "status": "partial",
+            "opportunities": [],
+            "disqualified": [],
+            "top_3": [],
+            "run_id": 1,
+            "json_path": str(out_path / "20260101_000000_results.json"),
+            "posts_analyzed": 3,
+            "meta_json_path": str(out_path / "20260101_000000_meta.json"),
+        }
+
+    with (
+        patch("saas_radar.main.init_db"),
+        patch("saas_radar.main.has_successful_run", return_value=False),
+        patch("saas_radar.main.run_ai_analysis", side_effect=fake_run_ai_analysis),
+        patch("saas_radar.main.phase_heuristic_tuner") as mock_tuner,
+        patch("saas_radar.main.send_opportunity_alert"),
+        patch("saas_radar.main.send_run_summary"),
+    ):
+        from saas_radar.main import run_pipeline
+
+        run_pipeline(skip_scrape=True, skip_gtm=True, output=str(out_dir))
+
+    mock_tuner.assert_called_once()
+    assert mock_tuner.call_args.kwargs["meta_json_path"] == str(meta_file)

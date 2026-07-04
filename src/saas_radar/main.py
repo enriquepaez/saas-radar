@@ -259,9 +259,10 @@ def run_pipeline(
         for opp in (ai_result.get("opportunities") or []):
             send_opportunity_alert(opp)
 
-        # Buscar el meta-JSON más reciente para la fase 4.5
+        # Buscar el meta-JSON más reciente para la fase 4.5 en el directorio
+        # de output real (save_meta_analysis lo escribe junto al results JSON)
         import glob as _glob
-        meta_files = sorted(_glob.glob("data/runs/*_meta.json"))
+        meta_files = sorted(_glob.glob(os.path.join(output, "*_meta.json")))
         if meta_files:
             meta_json_path = meta_files[-1]
     else:
