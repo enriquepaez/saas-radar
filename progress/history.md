@@ -429,3 +429,43 @@ contenga `saas.db.zst` y NO `saas.db`.
   agente GTM no procesa nada (opportunity_gtm vacía).
 - **#28:** `meta_recommendations` con 0 filas tras 24 runs → el ciclo de
   tuning automático (#18/#20) no tiene input. Requiere investigación.
+
+---
+
+## Sesión 2026-07-04 (2) — Feature #29 `db_storage_github_releases` (rama `feat/29-db_storage_github_releases`)
+
+### Contexto
+
+Tras verificar la #26 en producción (run verde, `.zst` de 24,8 MB en
+`origin/data`), el usuario pidió una solución definitiva al almacenamiento.
+Diagnóstico: la rama `data` es insostenible como almacén — 1,25 GB acumulados
+en 14 snapshots (blobs zstd no deltificables, ~9 GB/año a futuro), el límite
+de 100 MB/archivo volvería con la BD a ~450 MB, y el pipeline falló 9 días
+sin detección. Decisión del usuario: GitHub Releases + alerta Telegram.
+Alternativas descartadas: rama huérfana con force-push, storage externo R2/S3.
+
+### Cambios
+
+- `.github/workflows/pipeline.yml`: restore desde release `db-latest`
+  (`gh release download`, fallback transitorio al checkout de la rama `data`
+  con `continue-on-error: true`, fallback final BD nueva); persist a Releases
+  (VACUUM + zstd → `db-latest` create/upload `--clobber` + snapshot
+  `db-YYYYMMDD` con `runs.tar.gz`); rotación que conserva los 7 snapshots
+  más recientes (regex `db-[0-9]{8}`, no matchea `db-latest`); alerta
+  Telegram `if: failure()` con guard si faltan secrets. El step
+  "Persist to data branch" (commit/push) desaparece.
+- `.github/workflows/tuner.yml`: mismo restore desde release + alerta de fallo.
+- `tests/test_pipeline_workflow.py`: suite de estructura YAML (de la #22)
+  extendida para el nuevo flujo (+172 líneas).
+- `feature_list.json`: #29 done.
+
+### Verificación
+
+416 passed, 4 skipped, exit 0. YAML de ambos workflows válido; bloques shell
+simulados con `bash -e` y `gh` mockeado. `./init.sh` OK. Reviewer: APROBADO
+(`progress/review_db_storage_github_releases.md`).
+
+Verificación post-merge pendiente: 1 workflow_dispatch verde → release
+`db-latest` con asset del día + snapshot `db-YYYYMMDD` con `runs.tar.gz` +
+prueba de la alerta Telegram. La rama `data` queda congelada como fallback;
+borrado manual cuando haya varios runs verdes con Releases (recupera 1,25 GB).
