@@ -19,6 +19,11 @@ from saas_radar.analysis.extraction import (
     run_batch_extraction,
 )
 from saas_radar.analysis.llm_clients import call_llm
+from saas_radar.analysis.meta_analysis import (
+    generate_meta_analysis,
+    print_meta_summary,
+    save_meta_analysis,
+)
 from saas_radar.analysis.synthesis import _validate_synthesis, build_synthesis_prompt
 from saas_radar.storage.db import init_db, persist_run_to_db
 
@@ -153,6 +158,8 @@ def run_ai_analysis(
     5. build_synthesis_prompt → call_llm → _validate_synthesis.
     6. _print_results + _save_results.
     7. persist_run_to_db con status 'ok'/'partial'/'failed'.
+    8. Meta-análisis (generate_meta_analysis + print_meta_summary +
+       save_meta_analysis) — best-effort: un fallo aquí NO aborta el run.
 
     Args:
         min_score: Score mínimo de Reddit para filtrar posts.
@@ -164,7 +171,8 @@ def run_ai_analysis(
         db_path: Ruta a la BD SQLite.
 
     Returns:
-        dict con keys: status, opportunities, disqualified, top_3, run_id, json_path.
+        dict con keys: status, opportunities, disqualified, top_3, run_id,
+        json_path, posts_analyzed, meta_json_path.
     """
     db_url = f"sqlite:///{db_path}"
     start_time = time.time()
@@ -206,6 +214,7 @@ def run_ai_analysis(
             "run_id": run_id,
             "json_path": None,
             "posts_analyzed": 0,
+            "meta_json_path": None,
         }
 
     posts_list: list[pd.Series] = [posts_df.iloc[i] for i in range(len(posts_df))]
@@ -255,6 +264,7 @@ def run_ai_analysis(
             "run_id": run_id,
             "json_path": None,
             "posts_analyzed": len(posts_list),
+            "meta_json_path": None,
         }
 
     # ── Paso 5: síntesis ──────────────────────────────────────────────────────
@@ -288,6 +298,7 @@ def run_ai_analysis(
             "run_id": run_id,
             "json_path": None,
             "posts_analyzed": len(posts_list),
+            "meta_json_path": None,
         }
 
     # ── Paso 6: validación ────────────────────────────────────────────────────
@@ -330,6 +341,20 @@ def run_ai_analysis(
 
     logger.info("Run persistido: run_id=%d status=%s", run_id, status)
 
+    # ── Paso 9: meta-análisis (best-effort, nunca aborta el run) ─────────────
+    meta_json_path: str | None = None
+    try:
+        meta = generate_meta_analysis(
+            extractions=valid_extractions,
+            opportunities=opps,
+            post_age_days=post_age_days,
+            db_url=db_url,
+        )
+        print_meta_summary(meta, db_url=db_url)
+        meta_json_path = save_meta_analysis(meta, json_path, run_id=run_id, db_url=db_url)
+    except Exception as exc:
+        logger.warning("Meta-análisis falló (el pipeline continúa): %s", exc, exc_info=True)
+
     return {
         "status": status,
         "opportunities": opps,
@@ -338,6 +363,7 @@ def run_ai_analysis(
         "run_id": run_id,
         "json_path": json_path,
         "posts_analyzed": len(posts_list),
+        "meta_json_path": meta_json_path,
     }
 
 

@@ -1,8 +1,11 @@
-"""Tests del orquestador ai_analyzer: flujo completo, cache defensivo y abort."""
+"""Tests del orquestador ai_analyzer: flujo completo, cache defensivo, abort y meta-análisis."""
 
 from __future__ import annotations
 
+import glob
 import json
+import logging
+import os
 import sqlite3
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -489,3 +492,160 @@ def test_extract_and_cache_uses_batch_for_many_posts(tmp_path):
         ai_mod._extract_and_cache(posts_batch, "cache.json")
 
     mock_batch.assert_called_once()
+
+
+# ── Test 10: el meta-análisis puebla meta_recommendations y escribe <ts>_meta.json
+
+
+def test_meta_analysis_populates_recommendations_and_writes_json(tmp_path):
+    """Tras un run ok, meta_recommendations tiene >=1 fila y <ts>_meta.json existe en el output."""
+    db_file = tmp_path / "test.db"
+    _init_test_db(str(db_file))
+    out_dir = tmp_path / "runs"
+
+    posts_df = pd.DataFrame([_make_post(i) for i in range(3)])
+    extractions = [_make_extraction(i) for i in range(3)]
+    synthesis_raw = _make_synthesis_response(n_opps=1)
+
+    with (
+        patch("saas_radar.analysis.ai_analyzer.init_db"),
+        patch("saas_radar.analysis.ai_analyzer.load_pain_posts", return_value=posts_df),
+        patch("saas_radar.analysis.ai_analyzer.run_batch_extraction", return_value=extractions),
+        patch("saas_radar.analysis.ai_analyzer.extract_problem_deep", return_value=_make_extraction(0)),
+        patch("saas_radar.analysis.ai_analyzer._clean_extractions", return_value=extractions),
+        patch("saas_radar.analysis.ai_analyzer.build_synthesis_prompt", return_value=("PROMPT", extractions)),
+        patch("saas_radar.analysis.ai_analyzer.call_llm", return_value=synthesis_raw),
+        patch("saas_radar.analysis.ai_analyzer._validate_synthesis", return_value=synthesis_raw),
+        patch("saas_radar.analysis.ai_analyzer._save_extractions_cache"),
+        patch("saas_radar.analysis.ai_analyzer._print_results"),
+    ):
+        from saas_radar.analysis.ai_analyzer import run_ai_analysis
+
+        result = run_ai_analysis(
+            top_n=3,
+            use_cached_extractions=False,
+            output_path=str(out_dir),
+            db_path=str(db_file),
+        )
+
+    assert result["status"] == "ok"
+
+    # La tabla meta_recommendations debe tener al menos 1 fila del run
+    conn = sqlite3.connect(str(db_file))
+    (n_recs,) = conn.execute("SELECT COUNT(*) FROM meta_recommendations").fetchone()
+    run_ids = [r[0] for r in conn.execute("SELECT DISTINCT run_id FROM meta_recommendations").fetchall()]
+    conn.close()
+    assert n_recs >= 1
+    assert run_ids == [result["run_id"]]
+
+    # El meta JSON existe junto al results JSON, con el mismo timestamp
+    meta_files = sorted(out_dir.glob("*_meta.json"))
+    results_files = sorted(out_dir.glob("*_results.json"))
+    assert len(meta_files) == 1
+    assert len(results_files) == 1
+    ts = results_files[0].name[: -len("_results.json")]
+    assert meta_files[0].name == f"{ts}_meta.json"
+    assert result["meta_json_path"] == str(meta_files[0])
+
+    meta = json.loads(meta_files[0].read_text(encoding="utf-8"))
+    assert "recommendations" in meta
+    assert len(meta["recommendations"]) >= 1
+
+
+# ── Test 11: la ruta del meta JSON coincide con el glob de la fase 4.5 ────────
+
+
+def test_meta_json_path_matches_phase45_glob(tmp_path):
+    """El glob que usa main.py (os.path.join(output, '*_meta.json')) encuentra el meta generado."""
+    db_file = tmp_path / "test.db"
+    _init_test_db(str(db_file))
+    out_dir = tmp_path / "ai_analysis.json"  # nombre real de producción, contiene '.json'
+
+    posts_df = pd.DataFrame([_make_post(i) for i in range(3)])
+    extractions = [_make_extraction(i) for i in range(3)]
+    synthesis_raw = _make_synthesis_response(n_opps=1)
+
+    with (
+        patch("saas_radar.analysis.ai_analyzer.init_db"),
+        patch("saas_radar.analysis.ai_analyzer.load_pain_posts", return_value=posts_df),
+        patch("saas_radar.analysis.ai_analyzer.run_batch_extraction", return_value=extractions),
+        patch("saas_radar.analysis.ai_analyzer.extract_problem_deep", return_value=_make_extraction(0)),
+        patch("saas_radar.analysis.ai_analyzer._clean_extractions", return_value=extractions),
+        patch("saas_radar.analysis.ai_analyzer.build_synthesis_prompt", return_value=("PROMPT", extractions)),
+        patch("saas_radar.analysis.ai_analyzer.call_llm", return_value=synthesis_raw),
+        patch("saas_radar.analysis.ai_analyzer._validate_synthesis", return_value=synthesis_raw),
+        patch("saas_radar.analysis.ai_analyzer._save_extractions_cache"),
+        patch("saas_radar.analysis.ai_analyzer._print_results"),
+    ):
+        from saas_radar.analysis.ai_analyzer import run_ai_analysis
+
+        result = run_ai_analysis(
+            top_n=3,
+            use_cached_extractions=False,
+            output_path=str(out_dir),
+            db_path=str(db_file),
+        )
+
+    # Misma expresión de glob que usa run_pipeline para la fase 4.5
+    found = sorted(glob.glob(os.path.join(str(out_dir), "*_meta.json")))
+    assert found == [result["meta_json_path"]]
+    # El directorio con '.json' en el nombre no se corrompe
+    assert Path(result["meta_json_path"]).parent == out_dir
+
+
+# ── Test 12: fallo del meta-análisis no aborta run_ai_analysis ────────────────
+
+
+def test_meta_analysis_failure_does_not_abort_run(tmp_path, caplog):
+    """Si generate_meta_analysis lanza, run_ai_analysis devuelve su resultado normal + WARNING."""
+    db_file = tmp_path / "test.db"
+    _init_test_db(str(db_file))
+
+    posts_df = pd.DataFrame([_make_post(i) for i in range(3)])
+    extractions = [_make_extraction(i) for i in range(3)]
+    synthesis_raw = _make_synthesis_response(n_opps=1)
+
+    with (
+        patch("saas_radar.analysis.ai_analyzer.init_db"),
+        patch("saas_radar.analysis.ai_analyzer.load_pain_posts", return_value=posts_df),
+        patch("saas_radar.analysis.ai_analyzer.run_batch_extraction", return_value=extractions),
+        patch("saas_radar.analysis.ai_analyzer.extract_problem_deep", return_value=_make_extraction(0)),
+        patch("saas_radar.analysis.ai_analyzer._clean_extractions", return_value=extractions),
+        patch("saas_radar.analysis.ai_analyzer.build_synthesis_prompt", return_value=("PROMPT", extractions)),
+        patch("saas_radar.analysis.ai_analyzer.call_llm", return_value=synthesis_raw),
+        patch("saas_radar.analysis.ai_analyzer._validate_synthesis", return_value=synthesis_raw),
+        patch("saas_radar.analysis.ai_analyzer._save_extractions_cache"),
+        patch("saas_radar.analysis.ai_analyzer._print_results"),
+        patch(
+            "saas_radar.analysis.ai_analyzer.generate_meta_analysis",
+            side_effect=RuntimeError("meta boom"),
+        ),
+        caplog.at_level(logging.WARNING, logger="saas_radar.analysis.ai_analyzer"),
+    ):
+        from saas_radar.analysis.ai_analyzer import run_ai_analysis
+
+        result = run_ai_analysis(
+            top_n=3,
+            use_cached_extractions=False,
+            output_path=str(tmp_path / "runs"),
+            db_path=str(db_file),
+        )
+
+    # El run terminó normal a pesar del fallo del meta-análisis
+    assert result["status"] == "ok"
+    assert len(result["opportunities"]) == 1
+    assert result["meta_json_path"] is None
+
+    # El run quedó persistido antes del fallo
+    conn = sqlite3.connect(str(db_file))
+    rows = conn.execute("SELECT status FROM analysis_runs").fetchall()
+    conn.close()
+    assert rows[0][0] == "ok"
+
+    # WARNING con traceback (exc_info) en el log
+    warnings = [
+        r for r in caplog.records
+        if r.levelno == logging.WARNING and "Meta-análisis falló" in r.getMessage()
+    ]
+    assert len(warnings) == 1
+    assert warnings[0].exc_info is not None

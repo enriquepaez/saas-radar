@@ -13,9 +13,9 @@ from saas_radar.analysis.meta_analysis import (
     _find_empty_queries,
     generate_meta_analysis,
     print_meta_summary,
+    save_meta_analysis,
 )
 from saas_radar.storage.db import init_db, persist_meta_recommendations
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -252,3 +252,37 @@ def test_generate_meta_analysis_summary_keys(tmp_db):
         "summary",
     }
     assert expected_keys == set(meta.keys())
+
+
+# ---------------------------------------------------------------------------
+# Test 8 — save_meta_analysis no corrompe directorios con '.json' en el nombre
+# ---------------------------------------------------------------------------
+
+
+def test_save_meta_analysis_path_inside_dir_named_json(tmp_path):
+    """Con results en <dir>.json/<ts>_results.json, el meta va al MISMO dir como <ts>_meta.json."""
+    out_dir = tmp_path / "ai_analysis.json"  # nombre real del output de producción
+    out_dir.mkdir()
+    run_json = out_dir / "20260101_000000_results.json"
+    run_json.write_text("{}", encoding="utf-8")
+
+    meta_path = save_meta_analysis({"recommendations": []}, str(run_json), run_id=None)
+
+    assert meta_path == str(out_dir / "20260101_000000_meta.json")
+    assert (out_dir / "20260101_000000_meta.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# Test 9 — save_meta_analysis con nombre genérico (sin sufijo _results)
+# ---------------------------------------------------------------------------
+
+
+def test_save_meta_analysis_generic_json_name(tmp_path):
+    """Un results 'run.json' produce 'run_meta.json' en el mismo directorio."""
+    run_json = tmp_path / "run.json"
+    run_json.write_text("{}", encoding="utf-8")
+
+    meta_path = save_meta_analysis({"recommendations": []}, str(run_json), run_id=None)
+
+    assert meta_path == str(tmp_path / "run_meta.json")
+    assert (tmp_path / "run_meta.json").exists()

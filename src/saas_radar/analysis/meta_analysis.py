@@ -7,6 +7,7 @@ import logging
 import os
 import time
 from collections import Counter
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import text
@@ -136,12 +137,15 @@ def save_meta_analysis(
 ) -> str:
     """Guarda el meta-análisis en JSON y persiste recomendaciones en BD.
 
-    Deriva la ruta reemplazando '.json' -> '_meta.json'.
+    Deriva la ruta a partir del NOMBRE del archivo de results (nunca del
+    directorio): '<ts>_results.json' -> '<ts>_meta.json'. El meta JSON queda
+    junto al results, así el glob de la fase 4.5 (main.py) lo encuentra en el
+    mismo directorio de output.
     Si run_id se pasa, llama persist_meta_recommendations para acumular
     recurrence en recomendaciones repetidas entre runs.
     """
-    meta_path = run_json_path.replace(".json", "_meta.json")
-    os.makedirs(os.path.dirname(meta_path), exist_ok=True)
+    meta_path = str(_derive_meta_path(run_json_path))
+    os.makedirs(os.path.dirname(meta_path) or ".", exist_ok=True)
     with open(meta_path, "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)
     logger.info("Meta-análisis guardado en %s", meta_path)
@@ -150,6 +154,24 @@ def save_meta_analysis(
         persist_meta_recommendations(run_id, meta["recommendations"], db_url)
 
     return meta_path
+
+
+def _derive_meta_path(run_json_path: str) -> Path:
+    """Deriva la ruta del meta JSON tocando solo el nombre del archivo.
+
+    Un str.replace('.json', '_meta.json') sobre la ruta completa corrompería
+    directorios cuyo nombre contiene '.json' (caso real de producción:
+    data/ai_analysis.json/<ts>_results.json).
+    """
+    p = Path(run_json_path)
+    name = p.name
+    if name.endswith("_results.json"):
+        meta_name = name[: -len("_results.json")] + "_meta.json"
+    elif name.endswith(".json"):
+        meta_name = name[: -len(".json")] + "_meta.json"
+    else:
+        meta_name = name + "_meta.json"
+    return p.with_name(meta_name)
 
 
 def print_meta_summary(meta: dict[str, Any], db_url: str | None = None) -> None:

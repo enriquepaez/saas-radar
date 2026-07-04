@@ -506,3 +506,44 @@ corre al arrancar el pipeline) y reparará las 2 opps existentes.
 
 El venv del repo es `.venv/`, no `venv/` (algunos acceptance antiguos
 mencionan `./venv/bin/pytest`).
+
+---
+
+## Sesión 2026-07-04 (4) — Feature #28 `investigate_meta_recommendations_empty` (rama `feat/28-investigate_meta_recommendations_empty`)
+
+### Diagnóstico (2 explorers en paralelo)
+
+`meta_recommendations` con 0 filas tras 27 analysis_runs de producción. Causa
+raíz (ver `progress/explore_meta_code.md` y `progress/explore_meta_runtime.md`):
+la fase de meta-análisis era **código muerto** — `generate_meta_analysis` /
+`save_meta_analysis` sin ningún caller en `src/` (solo tests); los logs de
+Actions confirman que el pipeline saltaba del análisis IA a la FASE 5 sin
+rastro de fase 4/4.5. En cascada, la fase 4.5 (heuristic tuner #21) tampoco
+corría nunca: su glob `data/runs/*_meta.json` siempre vacío, agravado por el
+desajuste de rutas (los results reales van a `data/ai_analysis.json/`). Los
+tests unitarios de #13 pasaban porque prueban las funciones en aislamiento;
+faltaba el test de integración pipeline → tabla.
+
+### Cambios
+
+- `src/saas_radar/analysis/ai_analyzer.py`: cablea el meta-análisis al final
+  de `run_ai_analysis` (tras `persist_run_to_db`, con el run_id real):
+  generate + print_meta_summary + save_meta_analysis, en try/except con
+  `logger.warning(..., exc_info=True)` — un fallo no aborta el pipeline.
+- `src/saas_radar/analysis/meta_analysis.py`: fix de la derivación de ruta
+  del `_meta.json` (`.replace(".json", ...)` corrompía rutas con `.json` en
+  el nombre del directorio — el caso real `data/ai_analysis.json/`).
+- `src/saas_radar/main.py`: el glob de la fase 4.5 busca en el directorio de
+  output real en vez del hardcodeado `data/runs/`.
+- Tests (+244 líneas): integración run simulado → `meta_recommendations` ≥1
+  fila + meta JSON en output; coincidencia escritura/glob; excepción no
+  propaga (caplog); caso directorio `.json`.
+
+### Verificación
+
+427 passed, 4 skipped (exit 0), `./init.sh` OK. Reviewer: APROBADO
+(`progress/review_investigate_meta_recommendations_empty.md`). Con el merge,
+el próximo run del cron poblará `meta_recommendations` por primera vez y la
+fase 4.5 podrá ejecutarse — el ciclo de tuning automático (#18/#20/#21) queda
+operativo. Verificar tras 1 run real: `SELECT COUNT(*) FROM
+meta_recommendations` > 0 en la BD de la release `db-latest`.
