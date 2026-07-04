@@ -387,3 +387,45 @@ Suite completa pasa (exit code 0). Reviewer aprobó todos los acceptance criteri
 ### Verificación
 
 363 passed, 4 skipped (sentence-transformers no instalado en CI). Todos los tests de v1 intactos.
+
+---
+
+## Sesión 2026-07-04 — Feature #26 `pipeline_db_compression` (rama `feat/26-pipeline_db_compression`)
+
+### Contexto
+
+Desde el 26-jun todos los runs del cron fallaban en 'Persist to data branch':
+`data/saas.db` alcanzó 104.07 MB y GitHub rechaza el push (límite 100 MB por
+archivo). El pipeline ejecutaba bien pero el trabajo diario se perdía; último
+snapshot bueno en `origin/data`: 24-jun. Diagnóstico de la BD del 24-jun:
+27.718 posts, 24 analysis_runs (18 failed de la era Gemini, ya resueltos con
+el refactor a Groq; los 6 de Groq ok/partial con 0-1 opps/run).
+
+### Cambios
+
+- `.github/workflows/pipeline.yml`: persist con `VACUUM` + `zstd -T0 -15` →
+  `persist/data/saas.db.zst` y `git rm --ignore-unmatch` del plano en el mismo
+  commit; restore descomprime el `.zst` con fallback al `saas.db` plano
+  (compat con el primer run tras el merge).
+- `.github/workflows/tuner.yml`: step de restore equivalente (descomprime el
+  `.zst` a la ruta que los `--db-path` ya esperan) — evita romper el tuner al
+  cambiar el formato de la rama data (patrón regresión 8409bb9).
+- `feature_list.json`: milestone `M6_operational_fixes` con #26 (done),
+  #27 y #28 (pending).
+
+### Verificación
+
+BD de origin/data 98,1 MB → VACUUM 90,0 MB → zstd -15 **22,0 MB** (roundtrip
+byte-idéntico, `integrity_check` ok). YAML de ambos workflows válido,
+`pytest -q` exit 0, `./init.sh` OK. Reviewer: APROBADO
+(`progress/review_pipeline_db_compression.md`). Verificación final pendiente
+tras el merge: 1 workflow_dispatch verde con commit en `origin/data` que
+contenga `saas.db.zst` y NO `saas.db`.
+
+### Observaciones registradas como features
+
+- **#27:** `persist_run_to_db` inserta `discarded/reviewed/starred = NULL`
+  (bypasea el DEFAULT 0) → `load_active_opportunities` devuelve 0 filas y el
+  agente GTM no procesa nada (opportunity_gtm vacía).
+- **#28:** `meta_recommendations` con 0 filas tras 24 runs → el ciclo de
+  tuning automático (#18/#20) no tiene input. Requiere investigación.
