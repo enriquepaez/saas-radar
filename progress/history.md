@@ -469,3 +469,40 @@ Verificación post-merge pendiente: 1 workflow_dispatch verde → release
 `db-latest` con asset del día + snapshot `db-YYYYMMDD` con `runs.tar.gz` +
 prueba de la alerta Telegram. La rama `data` queda congelada como fallback;
 borrado manual cuando haya varios runs verdes con Releases (recupera 1,25 GB).
+
+---
+
+## Sesión 2026-07-04 (3) — Feature #27 `fix_opportunities_null_defaults` (rama `feat/27-fix_opportunities_null_defaults`)
+
+### Contexto
+
+Bug detectado al auditar la BD de producción: `persist_run_to_db` construía
+`opp_row = {f: opp.get(f) for f in opp_fields}` y el dict del LLM no trae
+`reviewed`/`starred`/`discarded` → INSERT parametrizado con NULL explícito
+que anula el `DEFAULT 0` del schema. Con `discarded=NULL`,
+`load_active_opportunities` (`WHERE discarded = 0`) devolvía 0 filas y el
+agente GTM no procesaba nada (`opportunity_gtm` vacía pese a opps con
+priority 8).
+
+### Cambios
+
+- `src/saas_radar/storage/db.py`: dict de defaults `{reviewed: 0, starred: 0,
+  discarded: 0}` aplicado tras construir `opp_row` (cubre clave ausente y
+  None, sin pisar valores legítimos); backfill idempotente en `init_db`
+  (`UPDATE opportunities SET <flag> = 0 WHERE <flag> IS NULL` × 3 columnas),
+  siguiendo el patrón de migraciones existente.
+- `tests/test_db.py`: +113 líneas — insert sin las 3 claves → SELECT directo
+  confirma 0 (no NULL); fixture con `discarded=NULL` insertada a mano →
+  `init_db` la migra y `load_active_opportunities` la devuelve.
+
+### Verificación
+
+Suite completa exit 0 (`.venv/bin/pytest -q`), `./init.sh` OK. Reviewer:
+APROBADO (`progress/review_fix_opportunities_null_defaults.md`). En
+producción el backfill se aplicará solo en el próximo run del cron (init_db
+corre al arrancar el pipeline) y reparará las 2 opps existentes.
+
+### Nota
+
+El venv del repo es `.venv/`, no `venv/` (algunos acceptance antiguos
+mencionan `./venv/bin/pytest`).

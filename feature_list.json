@@ -511,7 +511,7 @@
         "Suite completa verde: ./venv/bin/pytest -q → exit code 0"
       ],
       "depends_on": [26],
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 28,
