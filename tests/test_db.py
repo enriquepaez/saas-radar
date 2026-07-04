@@ -336,6 +336,119 @@ def test_persist_meta_recommendations_no_increment_if_acted(tmp_db):
 
 
 # ---------------------------------------------------------------------------
+# 16. persist_run_to_db: flags reviewed/starred/discarded no quedan NULL
+# ---------------------------------------------------------------------------
+
+
+def test_persist_run_to_db_flags_default_to_zero_when_keys_missing(tmp_db):
+    run_data = {"run_at": "2026-07-04T08:00:00", "status": "ok"}
+    opps = [{"product_name": "NoFlags", "niche": "SaaS", "evidence_quotes": "[]"}]
+
+    run_id = persist_run_to_db(run_data, opps, tmp_db)
+
+    engine = create_engine(tmp_db)
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT reviewed, starred, discarded FROM opportunities WHERE run_id = :rid"),
+            {"rid": run_id},
+        ).fetchone()
+
+    assert row == (0, 0, 0), f"esperado (0, 0, 0), obtenido {tuple(row)}"
+
+
+def test_persist_run_to_db_flags_default_to_zero_when_keys_are_none(tmp_db):
+    run_data = {"run_at": "2026-07-04T08:00:00", "status": "ok"}
+    opps = [{"product_name": "NoneFlags", "reviewed": None, "starred": None, "discarded": None}]
+
+    run_id = persist_run_to_db(run_data, opps, tmp_db)
+
+    engine = create_engine(tmp_db)
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT reviewed, starred, discarded FROM opportunities WHERE run_id = :rid"),
+            {"rid": run_id},
+        ).fetchone()
+
+    assert row == (0, 0, 0)
+
+
+def test_persist_run_to_db_flags_respect_explicit_values(tmp_db):
+    run_data = {"run_at": "2026-07-04T08:00:00", "status": "ok"}
+    opps = [{"product_name": "Flagged", "reviewed": 1, "starred": 1, "discarded": 1}]
+
+    run_id = persist_run_to_db(run_data, opps, tmp_db)
+
+    engine = create_engine(tmp_db)
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT reviewed, starred, discarded FROM opportunities WHERE run_id = :rid"),
+            {"rid": run_id},
+        ).fetchone()
+
+    assert row == (1, 1, 1)
+
+
+# ---------------------------------------------------------------------------
+# 17. Migración backfill: flags NULL pasan a 0 y la opp vuelve a ser activa
+# ---------------------------------------------------------------------------
+
+
+def test_init_db_backfills_null_flags_and_restores_active_opportunities(tmp_db):
+    engine = create_engine(tmp_db)
+    with engine.connect() as conn:
+        with conn.begin():
+            conn.execute(text(
+                "INSERT INTO opportunities "
+                "(product_name, reviewed, starred, discarded, canonical_id) "
+                "VALUES ('LegacyNull', NULL, NULL, NULL, NULL)"
+            ))
+            opp_id = conn.execute(text("SELECT last_insert_rowid()")).scalar()
+            conn.execute(
+                text("UPDATE opportunities SET canonical_id = :oid WHERE id = :oid"),
+                {"oid": opp_id},
+            )
+
+    # Antes de la migración: invisible para load_active_opportunities
+    # porque en SQL `NULL = 0` no es verdadero.
+    assert len(load_active_opportunities(tmp_db)) == 0
+
+    init_db(tmp_db)
+
+    active = load_active_opportunities(tmp_db)
+    assert len(active) == 1
+    assert active.iloc[0]["product_name"] == "LegacyNull"
+
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT reviewed, starred, discarded FROM opportunities WHERE id = :oid"),
+            {"oid": opp_id},
+        ).fetchone()
+    assert row == (0, 0, 0)
+
+
+def test_init_db_backfill_is_idempotent(tmp_db):
+    engine = create_engine(tmp_db)
+    with engine.connect() as conn:
+        with conn.begin():
+            conn.execute(text(
+                "INSERT INTO opportunities (id, product_name, discarded, canonical_id) "
+                "VALUES (1, 'Kept', 1, 1)"
+            ))
+            conn.execute(text(
+                "INSERT INTO opportunities (id, product_name, discarded, canonical_id) "
+                "VALUES (2, 'Nulled', NULL, 2)"
+            ))
+
+    init_db(tmp_db)
+    init_db(tmp_db)  # segunda pasada: sin efecto adicional
+
+    with engine.connect() as conn:
+        rows = conn.execute(text("SELECT id, discarded FROM opportunities ORDER BY id")).fetchall()
+
+    assert rows == [(1, 1), (2, 0)]
+
+
+# ---------------------------------------------------------------------------
 # Extra: _extract_target
 # ---------------------------------------------------------------------------
 

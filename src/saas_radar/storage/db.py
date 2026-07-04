@@ -215,6 +215,14 @@ def init_db(db_url: str | None = None) -> None:
                 conn.execute(text("ALTER TABLE opportunities ADD COLUMN canonical_id INTEGER"))
                 logger.info("Migración: añadida columna canonical_id a opportunities")
 
+            # Backfill de flags insertados como NULL explícito por versiones
+            # anteriores de persist_run_to_db (el DEFAULT 0 del schema no
+            # aplica cuando la columna aparece en el INSERT con valor NULL).
+            for flag in ("reviewed", "starred", "discarded"):
+                result = conn.execute(text(f"UPDATE opportunities SET {flag} = 0 WHERE {flag} IS NULL"))
+                if result.rowcount:
+                    logger.info("Migración: backfill %s=0 en %d opportunities", flag, result.rowcount)
+
             for idx in _CREATE_INDEXES:
                 conn.execute(text(idx))
 
@@ -345,6 +353,13 @@ def persist_run_to_db(
                 "discarded", "user_notes", "created_at", "canonical_id",
             ]
 
+            # Flags humanos con DEFAULT 0 en el schema. Como el INSERT
+            # parametrizado incluye estas columnas, un None se convertiría en
+            # NULL explícito y el DEFAULT no aplicaría (SQLite solo lo usa si
+            # la columna no aparece en el INSERT). Con NULL, el filtro
+            # `discarded = 0` de load_active_opportunities no matchea.
+            flag_defaults = {"reviewed": 0, "starred": 0, "discarded": 0}
+
             from saas_radar.config import ENABLE_DEDUP_V2
 
             for opp in opportunities:
@@ -354,6 +369,9 @@ def persist_run_to_db(
                     canonical = find_canonical(opp, existing_rows, threshold=0.3)
 
                 opp_row = {f: opp.get(f) for f in opp_fields}
+                for flag, default in flag_defaults.items():
+                    if opp_row[flag] is None:
+                        opp_row[flag] = default
                 opp_row["run_id"] = run_id
                 if canonical is not None:
                     opp_row["canonical_id"] = canonical
