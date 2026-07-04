@@ -12,7 +12,8 @@
     "M2_pipeline_ia": [5, 6, 7, 8, 9, 10, 11, 12],
     "M3_productizacion": [13, 14, 15, 16],
     "M4_operacion_avanzada": [17, 18, 19, 20, 21],
-    "M5_post_mvp_refinement": [22, 23, 24, 25]
+    "M5_post_mvp_refinement": [22, 23, 24, 25],
+    "M6_operational_fixes": [26, 27, 28]
   },
   "features": [
     {
@@ -474,6 +475,58 @@
       ],
       "depends_on": [15, 22, 24],
       "status": "done"
+    },
+    {
+      "id": 26,
+      "name": "pipeline_db_compression",
+      "milestone": "M6_operational_fixes",
+      "title": "Comprimir saas.db con zstd en la rama data (desbloquear límite 100MB de GitHub)",
+      "description": "Desde el 26-jun todos los runs del cron fallan en el step 'Persist to data branch': data/saas.db alcanzó 104.07 MB y GitHub rechaza el push (límite 100 MB por archivo). El pipeline ejecuta bien pero el trabajo diario se pierde; el último snapshot bueno en origin/data es del 24-jun (99 MB). Esta feature comprime la BD con zstd antes del push (SQLite comprime ~4-5x → ~20-25 MB) y la descomprime en el restore. Solo toca .github/workflows/pipeline.yml + docs.",
+      "acceptance": [
+        "Step 'Persist to data branch': antes de copiar a persist/, ejecuta sqlite3 data/saas.db 'VACUUM;' y comprime con zstd (nivel alto, -T0) generando persist/data/saas.db.zst",
+        "El step elimina persist/data/saas.db (el plano de 99MB) del árbol de la rama data con git rm si existe, en el mismo commit que añade el .zst",
+        "Step de restore: si existe persist/data/saas.db.zst lo descomprime a data/saas.db; si solo existe persist/data/saas.db (estado actual de la rama), lo copia tal cual (compat hacia atrás con el primer run tras el merge)",
+        "data/runs/ se sigue copiando a persist/ sin comprimir; el artefacto run-outputs no cambia",
+        "concurrency 'saas-radar' (cancel-in-progress: false) y actions/cache se mantienen tal cual",
+        "El tamaño del .zst resultante se documenta en progress/impl_pipeline_db_compression.md (esperado < 50 MB; verificar localmente comprimiendo la BD extraída de origin/data)",
+        "Documentar en progress/impl_pipeline_db_compression.md el nuevo flujo de sincronización local: git fetch origin data && git checkout origin/data -- data/saas.db.zst && zstd -d -f data/saas.db.zst -o data/saas.db",
+        "NO hay tests automatizados (workflow YAML); documentar la limitación y el plan de verificación manual: 1 workflow_dispatch verde con commit nuevo en origin/data que contenga saas.db.zst y NO saas.db",
+        ".github/workflows/tuner.yml se adapta al nuevo formato: descomprime persist/data/saas.db.zst antes de usar la BD, con el mismo fallback al saas.db plano (evitar regresión conocida tipo 8409bb9: cambiar el formato de la rama data sin actualizar a sus consumidores)"
+      ],
+      "depends_on": [22],
+      "status": "done"
+    },
+    {
+      "id": 27,
+      "name": "fix_opportunities_null_defaults",
+      "milestone": "M6_operational_fixes",
+      "title": "Fix: opportunities se insertan con discarded/reviewed/starred = NULL y desaparecen de load_active_opportunities",
+      "description": "persist_run_to_db construye opp_row = {f: opp.get(f) for f in opp_fields}; el dict que devuelve el LLM no trae reviewed/starred/discarded, así que se inserta NULL explícito saltándose el DEFAULT 0 del schema. Consecuencia observada en la BD de la rama data (24-jun): 2 opportunities con canonical_id correcto pero discarded=NULL → load_active_opportunities (WHERE discarded = 0) devuelve 0 filas → el agente GTM no procesa nada (opportunity_gtm vacía). Fix: defaults explícitos en el insert + migración idempotente de backfill.",
+      "acceptance": [
+        "persist_run_to_db rellena reviewed=0, starred=0, discarded=0 cuando el dict de la opp no trae esas claves (o las trae a None)",
+        "Migración idempotente en init_db: UPDATE opportunities SET discarded=0 WHERE discarded IS NULL (ídem reviewed y starred) — ejecutable N veces sin efecto adicional",
+        "Tras la migración sobre una BD con las 2 opps afectadas, load_active_opportunities devuelve esas 2 filas",
+        "Test nuevo: persist_run_to_db con opp dict sin claves reviewed/starred/discarded → la fila insertada tiene 0 en las tres columnas (no NULL)",
+        "Test nuevo: BD fixture con discarded=NULL → init_db la migra y load_active_opportunities la devuelve",
+        "Suite completa verde: ./venv/bin/pytest -q → exit code 0"
+      ],
+      "depends_on": [26],
+      "status": "pending"
+    },
+    {
+      "id": 28,
+      "name": "investigate_meta_recommendations_empty",
+      "milestone": "M6_operational_fixes",
+      "title": "Investigar y arreglar: meta_recommendations vacía tras 24 runs",
+      "description": "La tabla meta_recommendations de la BD de la rama data tiene 0 filas tras 24 analysis_runs (6 de ellos ok/partial con Groq). La fase 4 (generate_meta_analysis) debería acumular recomendaciones con recurrence — es el input del tuner determinista (#18) y del modo PR (#20); con la tabla vacía el ciclo de tuning automático está muerto. Investigar primero (¿la fase falla silenciosamente en el try/except? ¿las condiciones de generación nunca se cumplen? ¿persist_meta_recommendations no se llama?) y aplicar el fix que corresponda.",
+      "acceptance": [
+        "Diagnóstico documentado en progress/impl_investigate_meta_recommendations_empty.md: causa raíz concreta con evidencia (código + datos de la BD de la rama data)",
+        "Fix aplicado según diagnóstico; si la fase falla silenciosamente, el except deja de tragarse el error sin log (mínimo logger.warning con traceback)",
+        "Test que reproduce el escenario del diagnóstico y verifica que meta_recommendations se puebla tras un run simulado",
+        "Suite completa verde: ./venv/bin/pytest -q → exit code 0"
+      ],
+      "depends_on": [26],
+      "status": "pending"
     }
   ]
 }

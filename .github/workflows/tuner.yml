@@ -30,6 +30,14 @@ jobs:
           path: persist
           fetch-depth: 1
 
+      - name: Restore saas.db from data branch
+        run: |
+          if [ ! -f persist/data/saas.db ]; then
+            if [ -f persist/data/saas.db.zst ]; then
+              zstd -d -f persist/data/saas.db.zst -o persist/data/saas.db
+            fi
+          fi
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
