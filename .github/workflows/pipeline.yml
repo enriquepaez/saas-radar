@@ -37,14 +37,18 @@ jobs:
           ref: main
           fetch-depth: 1
 
-      - name: Checkout data branch
+      # Fallback de transición: la BD vive ahora en GitHub Releases y la rama
+      # data ya no se escribe. Este checkout solo cubre el primer run tras el
+      # merge (cuando la release db-latest aún no existe). continue-on-error
+      # permite que la transición sea limpia cuando la rama data se borre.
+      # Se eliminará junto con la rama tras verificar varios runs verdes.
+      - name: Checkout data branch (fallback transitorio)
         uses: actions/checkout@v4
+        continue-on-error: true
         with:
           ref: data
           path: persist
           fetch-depth: 1
-          token: ${{ secrets.GITHUB_TOKEN }}
-          persist-credentials: true
 
       - name: Restore saas.db from cache
         uses: actions/cache@v4
@@ -53,14 +57,21 @@ jobs:
           key: saas-db-${{ github.run_id }}
           restore-keys: saas-db-
 
-      - name: Restore saas.db from data branch
+      - name: Restore saas.db from release or data branch
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p data
           if [ ! -f data/saas.db ]; then
-            if [ -f persist/data/saas.db.zst ]; then
+            if gh release download db-latest --pattern 'saas.db.zst' --output data/saas.db.zst --clobber; then
+              zstd -d -f data/saas.db.zst -o data/saas.db
+              rm -f data/saas.db.zst
+            elif [ -f persist/data/saas.db.zst ]; then
               zstd -d -f persist/data/saas.db.zst -o data/saas.db
             elif [ -f persist/data/saas.db ]; then
               cp persist/data/saas.db data/saas.db
+            else
+              echo "Sin release db-latest ni rama data: arranque con BD nueva."
             fi
           fi
 
@@ -87,26 +98,61 @@ jobs:
             python -m saas_radar.main
           fi
 
-      - name: Persist to data branch
+      - name: Publish DB to GitHub Releases
         if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p persist/data/runs
-          if [ -f data/saas.db ]; then
-            sqlite3 data/saas.db 'VACUUM;'
-            zstd -T0 -15 -f data/saas.db -o persist/data/saas.db.zst
+          if [ ! -f data/saas.db ]; then
+            echo "No existe data/saas.db; nada que publicar."
+            exit 0
           fi
-          if [ -d data/runs ]; then
-            cp -r data/runs/. persist/data/runs/
+          sqlite3 data/saas.db 'VACUUM;'
+          zstd -T0 -15 -f data/saas.db -o saas.db.zst
+
+          if gh release view db-latest >/dev/null 2>&1; then
+            gh release upload db-latest saas.db.zst --clobber
+          else
+            gh release create db-latest saas.db.zst \
+              --title "db-latest" \
+              --notes "BD rodante del pipeline: siempre el asset del último run verde."
           fi
-          cd persist
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git config user.name "github-actions[bot]"
-          git rm --ignore-unmatch --quiet data/saas.db
-          if [ -f data/saas.db.zst ]; then
-            git add data/saas.db.zst
+
+          tar_paths=""
+          if [ -d data/ai_analysis.json ]; then tar_paths="$tar_paths data/ai_analysis.json"; fi
+          if [ -d data/runs ]; then tar_paths="$tar_paths data/runs"; fi
+          if [ -n "$tar_paths" ]; then
+            tar -czf runs.tar.gz $tar_paths
           fi
-          git add data/runs/
-          git diff --cached --quiet || (git commit -m "chore: pipeline run $(date -u +%FT%TZ)" && git push origin data)
+
+          snapshot="db-$(date -u +%Y%m%d)"
+          assets="saas.db.zst"
+          if [ -f runs.tar.gz ]; then
+            assets="$assets runs.tar.gz"
+          fi
+          if gh release view "$snapshot" >/dev/null 2>&1; then
+            for asset in $assets; do
+              gh release upload "$snapshot" "$asset" --clobber
+            done
+          else
+            gh release create "$snapshot" $assets \
+              --title "$snapshot" \
+              --notes "Snapshot diario de la BD y outputs del run ($(date -u +%F))."
+          fi
+
+      - name: Rotate daily snapshots (keep 7)
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release list --limit 100 --json tagName --jq '.[].tagName' \
+            | { grep -E '^db-[0-9]{8}$' || true; } \
+            | sort -r \
+            | tail -n +8 \
+            | while read -r tag; do
+                echo "Borrando snapshot antiguo: $tag"
+                gh release delete "$tag" --cleanup-tag --yes
+              done
 
       - name: Upload run outputs
         if: always()
@@ -116,3 +162,17 @@ jobs:
           path: data/runs/
           retention-days: 30
           if-no-files-found: ignore
+
+      - name: Notify failure via Telegram
+        if: failure()
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ]; then
+            curl -sS --max-time 15 "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+              --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+              --data-urlencode "text=[ALERTA] Workflow 'saas-radar pipeline' ha fallado. Run: ${RUN_URL}" \
+              || true
+          else
+            echo "Secrets de Telegram no configurados; alerta omitida."
+          fi

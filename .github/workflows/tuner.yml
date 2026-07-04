@@ -23,18 +23,30 @@ jobs:
       - name: Checkout main
         uses: actions/checkout@v4
 
-      - name: Checkout data branch
+      # Fallback de transición: la BD vive ahora en GitHub Releases y la rama
+      # data ya no se escribe. continue-on-error permite que la transición sea
+      # limpia cuando la rama data se borre. Se eliminará junto con la rama
+      # tras verificar varios runs verdes.
+      - name: Checkout data branch (fallback transitorio)
         uses: actions/checkout@v4
+        continue-on-error: true
         with:
           ref: data
           path: persist
           fetch-depth: 1
 
-      - name: Restore saas.db from data branch
+      - name: Restore saas.db from release or data branch
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
+          mkdir -p persist/data/runs
           if [ ! -f persist/data/saas.db ]; then
-            if [ -f persist/data/saas.db.zst ]; then
+            if gh release download db-latest --pattern 'saas.db.zst' --output persist/data/saas.db.zst --clobber; then
               zstd -d -f persist/data/saas.db.zst -o persist/data/saas.db
+            elif [ -f persist/data/saas.db.zst ]; then
+              zstd -d -f persist/data/saas.db.zst -o persist/data/saas.db
+            else
+              echo "Sin release db-latest ni rama data: el tuner correra sin BD previa."
             fi
           fi
 
@@ -94,3 +106,19 @@ jobs:
             --max-changes 5 \
             --apply \
             --readme-path README.md
+
+      - name: Notify failure via Telegram
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ]; then
+            curl -sS --max-time 15 "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+              --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+              --data-urlencode "text=[ALERTA] Workflow 'saas-radar tuner' ha fallado. Run: ${RUN_URL}" \
+              || true
+          else
+            echo "Secrets de Telegram no configurados; alerta omitida."
+          fi

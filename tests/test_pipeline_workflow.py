@@ -7,6 +7,7 @@ import pytest
 import yaml
 
 WORKFLOW_PATH = Path(__file__).parent.parent / ".github" / "workflows" / "pipeline.yml"
+TUNER_WORKFLOW_PATH = Path(__file__).parent.parent / ".github" / "workflows" / "tuner.yml"
 
 
 @pytest.fixture(scope="module")
@@ -14,6 +15,14 @@ def workflow() -> dict:
     """Carga y parsea el workflow YAML una sola vez por módulo."""
     assert WORKFLOW_PATH.exists(), f"El workflow no existe en {WORKFLOW_PATH}"
     with WORKFLOW_PATH.open() as f:
+        return yaml.safe_load(f)
+
+
+@pytest.fixture(scope="module")
+def tuner_workflow() -> dict:
+    """Carga y parsea el workflow del tuner una sola vez por módulo."""
+    assert TUNER_WORKFLOW_PATH.exists(), f"El workflow no existe en {TUNER_WORKFLOW_PATH}"
+    with TUNER_WORKFLOW_PATH.open() as f:
         return yaml.safe_load(f)
 
 
@@ -105,8 +114,12 @@ def test_artifact_retention_days(workflow: dict):
     assert retention == 30, f"retention-days debe ser 30, es: {retention}"
 
 
-def test_has_data_branch_checkout(workflow: dict):
-    """Existe un step de checkout con ref: data y path: persist (F22 persistencia)."""
+def test_has_data_branch_checkout_as_tolerant_fallback(workflow: dict):
+    """El checkout de la rama data sigue existiendo como fallback transitorio (F29).
+
+    Debe llevar continue-on-error: true para que el job no falle cuando la
+    rama data se borre tras la migración a GitHub Releases.
+    """
     steps = workflow["jobs"]["run"]["steps"]
     data_checkouts = [
         s for s in steps
@@ -115,7 +128,10 @@ def test_has_data_branch_checkout(workflow: dict):
         and s.get("with", {}).get("path") == "persist"
     ]
     assert len(data_checkouts) >= 1, (
-        "Falta checkout de la rama 'data' con path 'persist' (necesario para F22)"
+        "Falta checkout de la rama 'data' con path 'persist' (fallback transitorio F29)"
+    )
+    assert data_checkouts[0].get("continue-on-error") is True, (
+        "El checkout de la rama data debe llevar continue-on-error: true (F29)"
     )
 
 
@@ -167,7 +183,7 @@ def test_run_pipeline_step_handles_full_scan(workflow: dict):
 
 
 def test_permissions_contents_write(workflow: dict):
-    """permissions.contents debe ser 'write' (F22 persiste a rama data via push)."""
+    """permissions.contents debe ser 'write' (F29: crear/subir/borrar releases)."""
     permissions = workflow.get("permissions")
     assert permissions is not None, "Falta bloque 'permissions'"
     assert permissions.get("contents") == "write", (
@@ -175,15 +191,92 @@ def test_permissions_contents_write(workflow: dict):
     )
 
 
-def test_has_persist_step(workflow: dict):
-    """Existe un step cuyo name contiene 'Persist' (regresión-guard para F22)."""
+def test_no_push_to_data_branch(workflow: dict):
+    """Regresión-guard F29: la rama data está congelada, ningún step hace git push."""
     steps = workflow["jobs"]["run"]["steps"]
-    persist_steps = [
+    pushing_steps = [s for s in steps if "git push" in s.get("run", "")]
+    assert not pushing_steps, (
+        f"La rama data no debe escribirse más (F29). Steps con git push: "
+        f"{[s.get('name') for s in pushing_steps]}"
+    )
+
+
+def test_restore_step_downloads_from_db_latest_release(workflow: dict):
+    """El restore intenta primero la release db-latest con gh release download (F29)."""
+    steps = workflow["jobs"]["run"]["steps"]
+    restore_steps = [
         s for s in steps
-        if "persist" in s.get("name", "").lower()
+        if "gh release download db-latest" in s.get("run", "")
     ]
-    assert len(persist_steps) >= 1, (
-        "Falta step con 'Persist' en el name (paso de persistencia a rama data)"
+    assert len(restore_steps) >= 1, "Falta restore desde la release db-latest"
+    script = restore_steps[0]["run"]
+    assert "saas.db.zst" in script, "El restore debe descargar el asset saas.db.zst"
+    assert "zstd -d" in script, "El restore debe descomprimir el .zst"
+    assert "persist/data/saas.db" in script, (
+        "El restore debe conservar el fallback a la rama data (transición F29)"
+    )
+    assert "GH_TOKEN" in restore_steps[0].get("env", {}), (
+        "El step de restore necesita GH_TOKEN para usar gh"
+    )
+
+
+def test_publish_step_uploads_to_releases(workflow: dict):
+    """El step de publicación sube el .zst a db-latest y al snapshot diario (F29)."""
+    steps = workflow["jobs"]["run"]["steps"]
+    publish_steps = [
+        s for s in steps
+        if "gh release upload db-latest" in s.get("run", "")
+        or "gh release create db-latest" in s.get("run", "")
+    ]
+    assert len(publish_steps) >= 1, "Falta step de publicación a GitHub Releases"
+    script = publish_steps[0]["run"]
+    assert "VACUUM" in script, "La BD debe compactarse con VACUUM antes de comprimir"
+    assert "zstd -T0 -15" in script, "La compresión debe mantener zstd -T0 -15 (F26)"
+    assert "--clobber" in script, (
+        "La subida a db-latest debe usar --clobber para reemplazar el asset"
+    )
+    assert "db-$(date -u +%Y%m%d)" in script, "Falta el snapshot diario db-YYYYMMDD"
+    assert "runs.tar.gz" in script, (
+        "Los JSON de resultados deben empaquetarse en runs.tar.gz para el snapshot"
+    )
+    assert "GH_TOKEN" in publish_steps[0].get("env", {}), (
+        "El step de publicación necesita GH_TOKEN para usar gh"
+    )
+
+
+def test_rotation_step_keeps_seven_and_spares_db_latest(workflow: dict):
+    """La rotación borra solo releases db-<8 dígitos>, dejando 7 (F29)."""
+    steps = workflow["jobs"]["run"]["steps"]
+    rotation_steps = [s for s in steps if "gh release delete" in s.get("run", "")]
+    assert len(rotation_steps) == 1, "Debe haber exactamente un step de rotación"
+    script = rotation_steps[0]["run"]
+    assert "^db-[0-9]{8}$" in script, (
+        "El filtro de rotación debe ser la regex anclada ^db-[0-9]{8}$ "
+        "(estructuralmente incapaz de matchear db-latest)"
+    )
+    assert "tail -n +8" in script, "La rotación debe conservar los 7 snapshots más recientes"
+    assert "--cleanup-tag" in script, "El borrado debe limpiar también el tag git"
+    assert "--yes" in script, "El borrado debe ser no-interactivo (--yes)"
+
+
+def test_failure_alert_step(workflow: dict):
+    """Existe un step con if: failure() que alerta por Telegram vía curl (F29)."""
+    steps = workflow["jobs"]["run"]["steps"]
+    alert_steps = [
+        s for s in steps
+        if s.get("if") == "failure()" and "api.telegram.org" in s.get("run", "")
+    ]
+    assert len(alert_steps) == 1, "Falta step de alerta Telegram con if: failure()"
+    script = alert_steps[0]["run"]
+    assert 'if [ -n "$TELEGRAM_BOT_TOKEN" ]' in script, (
+        "La alerta debe llevar guard para no fallar sin secrets"
+    )
+    assert "RUN_URL" in script, "La alerta debe incluir el link al run"
+    assert "RUN_URL" in alert_steps[0].get("env", {}), (
+        "RUN_URL debe componerse en env con github.server_url/repository/run_id"
+    )
+    assert steps[-1] is alert_steps[0], (
+        "La alerta debe ser el último step para cubrir cualquier fallo previo"
     )
 
 
@@ -237,3 +330,62 @@ def test_workflow_job_steps_run_pipeline(workflow: dict):
         if "saas_radar.main" in s.get("run", "")
     ]
     assert len(pipeline_steps) >= 1, "Falta step que ejecute 'python -m saas_radar.main'"
+
+
+# ── tuner.yml (F29: mismo restore desde releases + alerta de fallo) ──────────
+
+
+def test_tuner_workflow_is_valid_yaml(tuner_workflow: dict):
+    """El workflow del tuner existe, es YAML válido y tiene el job 'tune'."""
+    assert isinstance(tuner_workflow, dict)
+    assert "tune" in tuner_workflow.get("jobs", {}), "Falta job 'tune' en tuner.yml"
+
+
+def test_tuner_restore_downloads_from_db_latest_release(tuner_workflow: dict):
+    """El tuner restaura la BD desde db-latest con fallback a la rama data (F29)."""
+    steps = tuner_workflow["jobs"]["tune"]["steps"]
+    restore_steps = [
+        s for s in steps
+        if "gh release download db-latest" in s.get("run", "")
+    ]
+    assert len(restore_steps) >= 1, "Falta restore desde la release db-latest en tuner.yml"
+    script = restore_steps[0]["run"]
+    assert "persist/data/saas.db" in script, (
+        "El destino debe seguir siendo persist/data/saas.db (--db-path del tuner no cambia)"
+    )
+    assert "zstd -d" in script, "El restore debe descomprimir el .zst"
+    assert "GH_TOKEN" in restore_steps[0].get("env", {}), (
+        "El step de restore necesita GH_TOKEN para usar gh"
+    )
+
+
+def test_tuner_data_branch_checkout_is_tolerant(tuner_workflow: dict):
+    """El checkout de la rama data en tuner.yml lleva continue-on-error: true (F29)."""
+    steps = tuner_workflow["jobs"]["tune"]["steps"]
+    data_checkouts = [
+        s for s in steps
+        if s.get("uses", "").startswith("actions/checkout")
+        and s.get("with", {}).get("ref") == "data"
+    ]
+    assert len(data_checkouts) >= 1, "Falta checkout de la rama data (fallback transitorio)"
+    assert data_checkouts[0].get("continue-on-error") is True, (
+        "El checkout de la rama data debe llevar continue-on-error: true (F29)"
+    )
+
+
+def test_tuner_failure_alert_step(tuner_workflow: dict):
+    """tuner.yml tiene la misma alerta Telegram con if: failure() (F29)."""
+    steps = tuner_workflow["jobs"]["tune"]["steps"]
+    alert_steps = [
+        s for s in steps
+        if s.get("if") == "failure()" and "api.telegram.org" in s.get("run", "")
+    ]
+    assert len(alert_steps) == 1, "Falta step de alerta Telegram con if: failure()"
+    script = alert_steps[0]["run"]
+    assert 'if [ -n "$TELEGRAM_BOT_TOKEN" ]' in script, (
+        "La alerta debe llevar guard para no fallar sin secrets"
+    )
+    assert "saas-radar tuner" in script, "El mensaje debe identificar el workflow del tuner"
+    assert steps[-1] is alert_steps[0], (
+        "La alerta debe ser el último step para cubrir cualquier fallo previo"
+    )

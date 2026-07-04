@@ -13,7 +13,7 @@
     "M3_productizacion": [13, 14, 15, 16],
     "M4_operacion_avanzada": [17, 18, 19, 20, 21],
     "M5_post_mvp_refinement": [22, 23, 24, 25],
-    "M6_operational_fixes": [26, 27, 28]
+    "M6_operational_fixes": [26, 27, 28, 29]
   },
   "features": [
     {
@@ -527,6 +527,28 @@
       ],
       "depends_on": [26],
       "status": "pending"
+    },
+    {
+      "id": 29,
+      "name": "db_storage_github_releases",
+      "milestone": "M6_operational_fixes",
+      "title": "Migrar el almacén de la BD de la rama data a GitHub Releases + alerta Telegram en fallo",
+      "description": "La rama data es estructuralmente insostenible como almacén: cada commit diario añade un blob completo (~25 MB zstd, no deltificable) — ya acumula 1,25 GB en 14 snapshots y crecería ~9 GB/año; el límite de 100 MB/archivo volverá cuando la BD real supere ~450 MB; y el pipeline falló 9 días sin que nadie se enterara. Esta feature migra la persistencia a una release rodante 'db-latest' (límite 2 GB/asset, cero crecimiento del repo, mismo GITHUB_TOKEN), añade snapshots diarios con retención 7 como backup/rollback, y alerta por Telegram cuando cualquiera de los dos workflows falla. Solo toca .github/workflows/ + docs.",
+      "acceptance": [
+        "pipeline.yml restore: descarga el asset saas.db.zst de la release 'db-latest' con gh release download y lo descomprime a data/saas.db; si la release no existe aún, fallback al checkout de la rama data (.zst o plano, la lógica actual) para la transición; si tampoco, arranca como hoy (BD nueva)",
+        "pipeline.yml persist: mantiene VACUUM + zstd -T0 -15; sube saas.db.zst a la release 'db-latest' (gh release create si no existe, gh release upload --clobber si existe)",
+        "Snapshot diario: además de db-latest, crea release 'db-YYYYMMDD' con el mismo asset; un step de rotación borra las releases db-* con fecha dejando solo las 7 más recientes (gh release list + gh release delete --cleanup-tag)",
+        "Los JSON de resultados del run (data/ai_analysis.json/ o data/runs/, lo que exista) se empaquetan en runs.tar.gz y se suben como asset del snapshot del día — dejan de depender de la retención de 30 días de los artifacts",
+        "tuner.yml: descarga la BD desde db-latest con el mismo fallback a la rama data",
+        "El step 'Persist to data branch' se elimina de pipeline.yml (la rama data deja de escribirse); NO se borra la rama en esta feature — documentar en impl.md que se borrará manualmente tras verificar varios runs verdes",
+        "Alerta de fallo: step final con if: failure() en pipeline.yml Y tuner.yml que manda mensaje a api.telegram.org/bot<token>/sendMessage vía curl con los secrets existentes (TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID), incluyendo nombre del workflow y link al run (github.server_url/repo/actions/runs/run_id); si los secrets no están, el step no falla (curl con || true o guard)",
+        "permissions contents: write se mantiene (las releases usan el mismo permiso del GITHUB_TOKEN); concurrency y actions/cache intactos",
+        "Sincronización local documentada en impl.md: gh release download db-latest -p saas.db.zst -O data/saas.db.zst --clobber && zstd -d -f data/saas.db.zst -o data/saas.db",
+        "Sintaxis YAML de ambos workflows validada; suite completa verde (./venv/bin/pytest -q → exit 0)",
+        "Sin tests automatizados (YAML); plan de verificación manual documentado: 1 workflow_dispatch verde → release db-latest con asset del día + snapshot db-YYYYMMDD con runs.tar.gz + prueba de la alerta Telegram"
+      ],
+      "depends_on": [26],
+      "status": "done"
     }
   ]
 }
