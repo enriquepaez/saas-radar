@@ -4,32 +4,41 @@
 > de micro-SaaS — suficientemente específicos, validados y con plan de acción
 > para decidir en 5 minutos si vale la pena perseguir cada oportunidad.
 
+> ⚠️ **Nota de numeración (2026-07-04):** las "F26-F30" de este documento se
+> escribieron antes del milestone M6, que ocupó los ids 26-29 de
+> `feature_list.json` con fixes operativos (compresión BD, storage en
+> Releases, fix discarded=NULL, cableado del meta-análisis). Al registrar las
+> fases de este roadmap como features, usar **ids #30 en adelante**.
+
 ---
 
-## Estado actual (junio 2026)
+## Estado actual (actualizado 2026-07-04, post-M6)
 
 | Métrica | Valor | Observación |
 |---|---|---|
-| Posts scrapeados | 23.325 | BD del 30-may, persistencia restaurada |
-| Oportunidades totales | 10 | Baja cantidad, calidad aceptable |
-| Oportunidades activas (canonical) | 4 | Dedup v1 colapsa demasiado |
-| Posts con señal real (sem≥5) | 119 (0,5%) | Ratio muy bajo |
-| Últimos runs exitosos | Hasta 27-abr | Fallos Gemini bloquearon mayo |
-| Tuner: sugerencias sin actuar | ~15 | recurrence acumulada, acted=0 |
+| Posts scrapeados | 30.216 | BD en release `db-latest` (GitHub Releases) |
+| Oportunidades totales | 2 | Groq-only desde 19-jun; 0-1 opps/run |
+| Oportunidades activas (canonical) | 2 | Visibles tras backfill #27 (1er run post-merge) |
+| Últimos runs exitosos | 4-jul | Persistencia en Releases operativa (#26/#29) |
+| meta_recommendations | 0 → poblándose | Fase 4 cableada en #28; primer dato real ≥5-jul |
+| Alerta de fallo | Activa | Telegram en `if: failure()` en ambos workflows |
 
 ---
 
 ## Fase 0 — Datos frescos (bloqueante para todo lo demás)
 
-El análisis de señal hecho hoy se basa en datos del 30-may con runs fallados.
+El análisis de señal previo se basa en datos del 30-may con runs fallados.
 No sirve de base para ajustar umbrales ni evaluar prompts.
 
 **Acciones**:
-1. Confirmar que el pipeline corre correctamente con persistencia restaurada (F22).
-2. Esperar 5-7 runs (≈1 semana de cron diario).
-3. `git fetch origin data && git checkout origin/data -- data/saas.db data/runs/`
+1. ✅ Pipeline corre y persiste correctamente (M6: Releases + alertas).
+2. Esperar 5-7 runs (≈1 semana de cron diario, desde el 5-jul).
+3. Sincronizar BD local:
+   `gh release download db-latest -p saas.db.zst -O data/saas.db.zst --clobber && zstd -d -f data/saas.db.zst -o data/saas.db`
 4. Repetir el análisis de señal de `progress/explore_signal_analysis.md`
    con los datos frescos como punto de partida real para las fases siguientes.
+   Incluir por primera vez el contenido real de `meta_recommendations`
+   (fase 4 recién cableada) en el análisis.
 
 ---
 
