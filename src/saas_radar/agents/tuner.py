@@ -219,6 +219,14 @@ def render_config_diff(proposals: Iterable[Proposal]) -> str:
         elif p.action == "remove_query":
             escaped = t.replace('"', '\\"')
             lines.append(f'PAIN_SEARCH_QUERIES.remove("{escaped}")')
+        elif p.action == "add_query":
+            escaped = t.replace('"', '\\"')
+            lines.append(f'PAIN_SEARCH_QUERIES.append("{escaped}")')
+        elif p.action == "add_subreddit":
+            lines.append(f'SUBREDDITS.append("{_normalize_subreddit(t)}")')
+        elif p.action == "add_phrase":
+            escaped = t.replace('"', '\\"')
+            lines.append(f'PAIN_SIGNAL_PHRASES.append(("{escaped}", {_DEFAULT_PHRASE_WEIGHT}))')
         else:
             lines.append(f"# accion desconocida: {p.action} {t}")
     if not lines:
@@ -227,6 +235,20 @@ def render_config_diff(proposals: Iterable[Proposal]) -> str:
 
 
 # ── Edición de config.py ─────────────────────────────────────────────
+
+# Peso por defecto para frases sugeridas por el LLM (A7). Conservador: las
+# frases existentes van de 1 a 3; una sugerencia aun no validada con datos
+# reales no debe puntuar al maximo.
+_DEFAULT_PHRASE_WEIGHT = 2
+
+
+def _normalize_subreddit(target: str) -> str:
+    """Quita el prefijo 'r/' (case-insensitive) de un nombre de subreddit.
+
+    Las sugerencias del LLM pueden venir como 'r/notion', pero en config.py
+    SUBREDDITS guarda solo el nombre ('notion').
+    """
+    return re.sub(r"^r/", "", target.strip(), flags=re.IGNORECASE)
 
 
 def _find_block_range(lines: list[str], var_name: str) -> tuple[int, int]:
@@ -261,8 +283,12 @@ def _insert_into_set(text: str, var_name: str, entry: str) -> str:
     start, end = _find_block_range(lines, var_name)
     if start == -1:
         return text
-    # Si ya existe, no duplicar
-    pattern = re.compile(rf'^\s*"{re.escape(entry)}"\s*,?\s*$', re.IGNORECASE)
+    # Escapar comillas dobles: el entry puede ser texto libre del LLM
+    # (add_query) y sin escapar generaria un config.py con SyntaxError.
+    escaped = entry.replace('"', '\\"')
+    # Si ya existe, no duplicar. El patron se construye sobre la forma
+    # ESCAPADA porque es la que queda escrita en el fichero.
+    pattern = re.compile(rf'^\s*"{re.escape(escaped)}"\s*,?\s*$', re.IGNORECASE)
     for i in range(start, end + 1):
         if pattern.match(lines[i]):
             return text  # ya existe
@@ -276,7 +302,45 @@ def _insert_into_set(text: str, var_name: str, entry: str) -> str:
                 if s and not s.startswith("#"):
                     indent = " " * (len(lines[j]) - len(lines[j].lstrip()))
                     break
-            lines.insert(i, f'{indent}"{entry}",')
+            lines.insert(i, f'{indent}"{escaped}",')
+            return "\n".join(lines)
+    return text
+
+
+def _insert_tuple_into_list(text: str, var_name: str, entry: str, weight: int) -> str:
+    """Inserta '    ("<entry>", <weight>),' antes del cierre ] de la variable lista.
+
+    Pensado para PAIN_SIGNAL_PHRASES, cuyos elementos son tuplas (frase, puntos)
+    — el formato de `_insert_into_set` ('"entry",') no sirve aqui.
+    Si la frase ya existe con cualquier peso (case-insensitive), no la duplica.
+    Detecta la indentacion del ultimo elemento y la replica.
+    """
+    lines = text.split("\n")
+    start, end = _find_block_range(lines, var_name)
+    if start == -1:
+        return text
+    # Escapar comillas dobles ANTES de construir el patron de duplicados:
+    # la linea escrita en el fichero contiene la forma escapada (\"), asi
+    # que el dedupe debe matchear contra esa misma forma o nunca acierta.
+    escaped = entry.replace('"', '\\"')
+    # Si ya existe la frase (con cualquier peso), no duplicar
+    pattern = re.compile(
+        rf'^\s*\(\s*"{re.escape(escaped)}"\s*,\s*\d+\s*\)\s*,?\s*$', re.IGNORECASE
+    )
+    for i in range(start, end + 1):
+        if pattern.match(lines[i]):
+            return text  # ya existe
+    # Encontrar linea de cierre (la primera que empiece con ] en el bloque)
+    for i in range(end, start - 1, -1):
+        if lines[i].strip() in ("]", "],"):
+            # Detectar indentacion del ultimo elemento real (no comentario, no vacio)
+            indent = "    "
+            for j in range(i - 1, start, -1):
+                s = lines[j].strip()
+                if s and not s.startswith("#"):
+                    indent = " " * (len(lines[j]) - len(lines[j].lstrip()))
+                    break
+            lines.insert(i, f'{indent}("{escaped}", {weight}),')
             return "\n".join(lines)
     return text
 
@@ -314,6 +378,14 @@ def apply_proposals(proposals: list[Proposal], config_path: Path) -> None:
             text = _remove_from_collection(text, "SUBREDDITS", p.target)
         elif p.action == "remove_query":
             text = _remove_from_collection(text, "PAIN_SEARCH_QUERIES", p.target)
+        elif p.action == "add_query":
+            text = _insert_into_set(text, "PAIN_SEARCH_QUERIES", p.target)
+        elif p.action == "add_subreddit":
+            text = _insert_into_set(text, "SUBREDDITS", _normalize_subreddit(p.target))
+        elif p.action == "add_phrase":
+            text = _insert_tuple_into_list(
+                text, "PAIN_SIGNAL_PHRASES", p.target, _DEFAULT_PHRASE_WEIGHT
+            )
         else:
             logger.warning("Accion desconocida ignorada: %s", p.action)
     config_path.write_text(text, encoding="utf-8")
@@ -522,7 +594,16 @@ def main(argv: list[str] | None = None) -> int:
 
     # 3. Aplicar cambios en config.py
     config_path = Path(args.config_path)
+    text_before = config_path.read_text(encoding="utf-8")
     apply_proposals(applied, config_path)
+    text_after = config_path.read_text(encoding="utf-8")
+
+    # Guard: si ninguna propuesta produjo un cambio real (p.ej. todas eran
+    # duplicados ya presentes en config.py), no hay nada que commitear —
+    # crear rama + commit fallaria con "nothing to commit".
+    if text_after == text_before:
+        print("(las propuestas no produjeron cambios en config.py — no se crea PR)")
+        return 0
     logger.info("config.py actualizado con %d propuestas.", len(applied))
 
     # 4. Crear rama, commit y push

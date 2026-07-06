@@ -49,6 +49,14 @@ jobs:
               echo "Sin release db-latest ni rama data: el tuner correra sin BD previa."
             fi
           fi
+          # Los meta-JSON de runs viven en runs.tar.gz (release db-latest); sin
+          # ellos el tuner analiza 0 runs y las reglas basadas en historico no ven nada.
+          if gh release download db-latest --pattern 'runs.tar.gz' --output runs.tar.gz --clobber; then
+            tar -xzf runs.tar.gz -C persist
+            rm -f runs.tar.gz
+          else
+            echo "Sin runs.tar.gz en db-latest: el tuner correra solo con la BD."
+          fi
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -94,6 +102,13 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python -m saas_radar.notifications.telegram tuner-report tuner_report.txt
+
+      # Sin identidad git el `git commit` del modo --apply falla con
+      # "fatal: empty ident name" (causa del run rojo del 2026-07-06).
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Run tuner (apply PR)
         env:

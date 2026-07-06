@@ -119,10 +119,16 @@ jobs:
           fi
 
           tar_paths=""
-          if [ -d data/ai_analysis.json ]; then tar_paths="$tar_paths data/ai_analysis.json"; fi
+          if [ -f data/ai_analysis.json ]; then tar_paths="$tar_paths data/ai_analysis.json"; fi
           if [ -d data/runs ]; then tar_paths="$tar_paths data/runs"; fi
           if [ -n "$tar_paths" ]; then
             tar -czf runs.tar.gz $tar_paths
+          fi
+
+          # El workflow del tuner descarga runs.tar.gz de db-latest para
+          # analizar el historico de meta-JSON; sin esto corre con 0 runs.
+          if [ -f runs.tar.gz ]; then
+            gh release upload db-latest runs.tar.gz --clobber
           fi
 
           snapshot="db-$(date -u +%Y%m%d)"

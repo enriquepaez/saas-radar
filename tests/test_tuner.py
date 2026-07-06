@@ -244,6 +244,19 @@ class TestRenderConfigDiff:
         assert 'SUBREDDITS.remove("startups")' in diff
         assert 'PAIN_SEARCH_QUERIES.remove("Zapier can\\\'t")' in diff or "Zapier can't" in diff
 
+    def test_genera_pseudo_python_acciones_llm(self):
+        proposals = [
+            Proposal("add_query", "invoice tracking spreadsheet", ""),
+            Proposal("add_subreddit", "r/shopify", ""),
+            Proposal("add_phrase", "retype into", ""),
+        ]
+        diff = render_config_diff(proposals)
+        assert 'PAIN_SEARCH_QUERIES.append("invoice tracking spreadsheet")' in diff
+        # El prefijo r/ se normaliza tambien en la previsualizacion
+        assert 'SUBREDDITS.append("shopify")' in diff
+        assert 'PAIN_SIGNAL_PHRASES.append(("retype into", 2))' in diff
+        assert "accion desconocida" not in diff
+
     def test_sin_propuestas(self):
         assert "sin cambios" in render_config_diff([])
 
@@ -407,6 +420,11 @@ class TestApplyProposals:
             'PAIN_SEARCH_QUERIES = [\n'
             '    "Zapier can\'t",\n'
             '    "I use Excel to track",\n'
+            ']\n'
+            '\n'
+            'PAIN_SIGNAL_PHRASES = [\n'
+            '    ("manually copy", 3),\n'
+            '    ("copy paste", 3),\n'
             ']\n',
             encoding="utf-8",
         )
@@ -463,6 +481,115 @@ class TestApplyProposals:
         apply_proposals([Proposal("add_high_signal", "newone", "test")], config)
         text = config.read_text(encoding="utf-8")
         assert "# comment line" in text  # comentario preservado
+
+    def test_add_query_inserta_en_pain_search_queries(self, tmp_path):
+        from saas_radar.agents.tuner import apply_proposals
+
+        config = self._make_config(tmp_path)
+        apply_proposals([Proposal("add_query", "invoice tracking spreadsheet", "LLM")], config)
+        text = config.read_text(encoding="utf-8")
+        # Debe estar dentro del bloque PAIN_SEARCH_QUERIES (antes de PAIN_SIGNAL_PHRASES)
+        queries_block = text.split("\nPAIN_SIGNAL_PHRASES = ")[0].split("\nPAIN_SEARCH_QUERIES = ")[1]
+        assert '"invoice tracking spreadsheet",' in queries_block
+
+    def test_add_query_no_duplica(self, tmp_path):
+        from saas_radar.agents.tuner import apply_proposals
+
+        config = self._make_config(tmp_path)
+        apply_proposals([Proposal("add_query", "I use Excel to track", "ya existe")], config)
+        assert config.read_text(encoding="utf-8").count('"I use Excel to track"') == 1
+
+    def test_add_query_con_comillas_genera_python_valido_y_no_duplica(self, tmp_path):
+        import ast
+
+        from saas_radar.agents.tuner import apply_proposals
+
+        config = self._make_config(tmp_path)
+        # Sintaxis de busqueda exacta, plausible en un query_suggestion del LLM
+        target = '"manual data entry" CRM'
+        apply_proposals([Proposal("add_query", target, "LLM")], config)
+        text = config.read_text(encoding="utf-8")
+        # El fichero resultante debe seguir siendo Python valido (comillas escapadas)
+        ast.parse(text)
+        assert '"\\"manual data entry\\" CRM",' in text
+        # Segunda pasada: el dedupe debe matchear la forma escapada ya escrita
+        apply_proposals([Proposal("add_query", target, "LLM repetido")], config)
+        text = config.read_text(encoding="utf-8")
+        ast.parse(text)
+        assert text.count("manual data entry") == 1
+
+    def test_add_subreddit_inserta_en_subreddits(self, tmp_path):
+        from saas_radar.agents.tuner import apply_proposals
+
+        config = self._make_config(tmp_path)
+        apply_proposals([Proposal("add_subreddit", "shopify", "LLM")], config)
+        text = config.read_text(encoding="utf-8")
+        subs_block = text.split("\nPAIN_SEARCH_QUERIES = ")[0].split("\nSUBREDDITS = ")[1]
+        assert '"shopify",' in subs_block
+
+    def test_add_subreddit_normaliza_prefijo_r(self, tmp_path):
+        from saas_radar.agents.tuner import apply_proposals
+
+        config = self._make_config(tmp_path)
+        # El LLM puede sugerir el target con prefijo r/; config.py guarda sin prefijo
+        apply_proposals([Proposal("add_subreddit", "r/shopify", "LLM")], config)
+        text = config.read_text(encoding="utf-8")
+        assert '"shopify",' in text
+        assert '"r/shopify"' not in text
+
+    def test_add_subreddit_no_duplica_case_insensitive(self, tmp_path):
+        from saas_radar.agents.tuner import apply_proposals
+
+        config = self._make_config(tmp_path)
+        # "PropertyManagement" ya existe en config.py; el LLM lo sugiere en minusculas
+        apply_proposals([Proposal("add_subreddit", "r/propertymanagement", "ya existe")], config)
+        text = config.read_text(encoding="utf-8")
+        assert text.lower().count('"propertymanagement"') == 1
+
+    def test_add_phrase_inserta_tupla_con_peso_2(self, tmp_path):
+        from saas_radar.agents.tuner import apply_proposals
+
+        config = self._make_config(tmp_path)
+        apply_proposals([Proposal("add_phrase", "retype into", "LLM")], config)
+        text = config.read_text(encoding="utf-8")
+        phrases_block = text.split("\nPAIN_SIGNAL_PHRASES = ")[1]
+        assert '("retype into", 2),' in phrases_block
+
+    def test_add_phrase_no_duplica_con_otro_peso(self, tmp_path):
+        from saas_radar.agents.tuner import apply_proposals
+
+        config = self._make_config(tmp_path)
+        # "manually copy" ya existe con peso 3: no debe insertarse con peso 2
+        apply_proposals([Proposal("add_phrase", "manually copy", "ya existe")], config)
+        text = config.read_text(encoding="utf-8")
+        assert text.count('"manually copy"') == 1
+        assert '("manually copy", 2)' not in text
+
+    def test_add_phrase_no_duplica_case_insensitive(self, tmp_path):
+        from saas_radar.agents.tuner import apply_proposals
+
+        config = self._make_config(tmp_path)
+        apply_proposals([Proposal("add_phrase", "Copy Paste", "ya existe")], config)
+        text = config.read_text(encoding="utf-8")
+        assert text.lower().count('"copy paste"') == 1
+
+    def test_add_phrase_con_comillas_genera_python_valido_y_no_duplica(self, tmp_path):
+        import ast
+
+        from saas_radar.agents.tuner import apply_proposals
+
+        config = self._make_config(tmp_path)
+        target = 'retype "into"'
+        apply_proposals([Proposal("add_phrase", target, "LLM")], config)
+        text = config.read_text(encoding="utf-8")
+        # Python valido y con la frase escapada dentro de la tupla
+        ast.parse(text)
+        assert '("retype \\"into\\"", 2),' in text
+        # Re-proponer la misma frase NO debe añadir otra copia (peso acumulado)
+        apply_proposals([Proposal("add_phrase", target, "LLM repetido")], config)
+        text = config.read_text(encoding="utf-8")
+        ast.parse(text)
+        assert text.count("retype") == 1
 
     def test_accion_desconocida_no_modifica(self, tmp_path):
         from saas_radar.agents.tuner import apply_proposals
@@ -677,6 +804,66 @@ class TestCliApply:
         # README tiene registro de tuning
         readme_text = readme.read_text(encoding="utf-8")
         assert "Registro de tuning automatico" in readme_text or "auto-tuning" in readme_text.lower()
+
+    def test_apply_sin_cambios_reales_no_crea_rama_ni_pr(self, tmp_path, monkeypatch, capsys):
+        """Si todas las propuestas son duplicados (config.py no cambia), el
+        tuner debe salir con 0 SIN tocar git — antes intentaba commitear y
+        fallaba con 'nothing to commit'."""
+        import subprocess as sp_module
+
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(list(cmd))
+            if cmd[:2] == ["gh", "pr"] and cmd[2] == "list":
+                return sp_module.CompletedProcess(cmd, 0, stdout="[]", stderr="")
+            return sp_module.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        monkeypatch.setattr("saas_radar.agents.tuner.subprocess.run", fake_run)
+
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
+        # Sin runs con empty_queries: la unica propuesta viene del LLM (A6)
+        # y sugiere un subreddit que YA existe en config.py -> no-op.
+        db = tmp_path / "saas.db"
+        _make_meta_recs_db(
+            db,
+            [{"type": "subreddit_suggestion", "target": "r/zapier", "recurrence": 2, "acted": 0}],
+        )
+
+        config_py = tmp_path / "config.py"
+        config_py.write_text(
+            'HIGH_SIGNAL_SUBREDDITS = {\n    "msp",\n}\n\n'
+            'SUBREDDITS = [\n    "zapier",\n]\n\n'
+            'PAIN_SEARCH_QUERIES = [\n    "live query",\n]\n',
+            encoding="utf-8",
+        )
+        original_config = config_py.read_text(encoding="utf-8")
+
+        from saas_radar import config as saas_config
+
+        monkeypatch.setattr(saas_config, "HIGH_SIGNAL_SUBREDDITS", set(), raising=False)
+        monkeypatch.setattr(saas_config, "SUBREDDITS", ["zapier"], raising=False)
+        monkeypatch.setattr(saas_config, "PAIN_SEARCH_QUERIES", ["live query"], raising=False)
+
+        rc = main(
+            [
+                "--runs-dir",
+                str(runs_dir),
+                "--db-path",
+                str(db),
+                "--config-path",
+                str(config_py),
+                "--apply",
+            ]
+        )
+
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "no produjeron cambios" in out
+        # config.py intacto y ningun comando git ejecutado
+        assert config_py.read_text(encoding="utf-8") == original_config
+        assert not any(c and c[0] == "git" for c in calls)
 
     def test_apply_skip_cuando_pr_ya_abierto(self, tmp_path, monkeypatch, capsys):
         import subprocess as sp_module
