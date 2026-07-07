@@ -261,7 +261,7 @@ def test_generate_meta_analysis_summary_keys(tmp_db):
 
 def test_save_meta_analysis_path_inside_dir_named_json(tmp_path):
     """Con results en <dir>.json/<ts>_results.json, el meta va al MISMO dir como <ts>_meta.json."""
-    out_dir = tmp_path / "ai_analysis.json"  # nombre real del output de producción
+    out_dir = tmp_path / "ai_analysis.json"  # nombre legacy con '.json' (caso limite que debe seguir funcionando)
     out_dir.mkdir()
     run_json = out_dir / "20260101_000000_results.json"
     run_json.write_text("{}", encoding="utf-8")

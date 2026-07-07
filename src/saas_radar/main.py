@@ -202,7 +202,7 @@ def run_pipeline(
     skip_gtm: bool = False,
     min_score: int = 5,
     top_posts: int = MAX_POSTS,
-    output: str = "data/ai_analysis.json",
+    output: str = "data/runs",
     use_cached_extractions: bool = False,
     full_scan: bool = False,
 ) -> None:
@@ -335,8 +335,8 @@ Ejemplos:
     parser.add_argument(
         "--output",
         type=str,
-        default="data/ai_analysis.json",
-        help="Ruta del JSON de resultados (default: data/ai_analysis.json)",
+        default="data/runs",
+        help="Directorio de salida de los JSON de resultados y meta (default: data/runs)",
     )
     parser.add_argument(
         "--use-cached-extractions",

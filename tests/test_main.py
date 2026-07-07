@@ -41,7 +41,7 @@ def test_argparse_has_all_required_flags():
     parser.add_argument("--skip-gtm", action="store_true")
     parser.add_argument("--min-score", type=int, default=5)
     parser.add_argument("--top-posts", type=int, default=MAX_POSTS)
-    parser.add_argument("--output", type=str, default="data/ai_analysis.json")
+    parser.add_argument("--output", type=str, default="data/runs")
     parser.add_argument("--use-cached-extractions", action="store_true")
     parser.add_argument("--full-scan", action="store_true")
 
@@ -51,9 +51,24 @@ def test_argparse_has_all_required_flags():
     assert args.skip_gtm is False
     assert args.min_score == 5
     assert args.top_posts == MAX_POSTS
-    assert args.output == "data/ai_analysis.json"
+    assert args.output == "data/runs"
     assert args.use_cached_extractions is False
     assert args.full_scan is False
+
+
+# ── Test 1b: el default real de output en run_pipeline apunta a data/runs ─────
+
+
+def test_run_pipeline_default_output_is_data_runs():
+    """El default de `output` debe ser data/runs: es el directorio que lee el
+    tuner (--runs-dir). Con el default antiguo (data/ai_analysis.json) los
+    meta-JSONs caian en otro sitio y el tuner siempre veia 0 runs."""
+    import inspect
+
+    from saas_radar.main import run_pipeline
+
+    sig = inspect.signature(run_pipeline)
+    assert sig.parameters["output"].default == "data/runs"
 
 
 # ── Test 2: --skip-scrape --skip-ai --skip-gtm no lanza excepción ─────────────

@@ -559,7 +559,7 @@ def test_meta_json_path_matches_phase45_glob(tmp_path):
     """El glob que usa main.py (os.path.join(output, '*_meta.json')) encuentra el meta generado."""
     db_file = tmp_path / "test.db"
     _init_test_db(str(db_file))
-    out_dir = tmp_path / "ai_analysis.json"  # nombre real de producción, contiene '.json'
+    out_dir = tmp_path / "ai_analysis.json"  # nombre legacy con '.json' (caso limite que debe seguir funcionando)
 
     posts_df = pd.DataFrame([_make_post(i) for i in range(3)])
     extractions = [_make_extraction(i) for i in range(3)]
