@@ -638,8 +638,16 @@ def main(argv: list[str] | None = None) -> int:
         ],
         capture_output=True,
         text=True,
-        check=True,
     )
+    if result.returncode != 0:
+        # Sin esto, un check=True lanzaria CalledProcessError y el motivo
+        # real del fallo de gh (stderr) quedaria invisible en el log de CI.
+        print(f"[ERROR] gh pr create fallo (exit {result.returncode}):", file=sys.stderr)
+        if result.stdout:
+            print(result.stdout, file=sys.stderr)
+        if result.stderr:
+            print(result.stderr, file=sys.stderr)
+        return 1
     pr_url = result.stdout.strip()
     print(f"PR creado: {pr_url}")
 

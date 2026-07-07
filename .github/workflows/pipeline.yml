@@ -74,6 +74,14 @@ jobs:
               echo "Sin release db-latest ni rama data: arranque con BD nueva."
             fi
           fi
+          # Histórico de runs: restaurar los meta-JSON de días anteriores para
+          # que se acumulen y el tuner analice ventanas de varios runs (lookback 10).
+          if gh release download db-latest --pattern 'runs.tar.gz' --output runs.tar.gz --clobber; then
+            tar -xzf runs.tar.gz
+            rm -f runs.tar.gz
+          else
+            echo "Sin runs.tar.gz en db-latest: histórico de runs vacío."
+          fi
 
       - name: Setup Python 3.11
         uses: actions/setup-python@v5
@@ -118,11 +126,10 @@ jobs:
               --notes "BD rodante del pipeline: siempre el asset del último run verde."
           fi
 
-          tar_paths=""
-          if [ -f data/ai_analysis.json ]; then tar_paths="$tar_paths data/ai_analysis.json"; fi
-          if [ -d data/runs ]; then tar_paths="$tar_paths data/runs"; fi
-          if [ -n "$tar_paths" ]; then
-            tar -czf runs.tar.gz $tar_paths
+          # Desde el fix de rutas, results y meta-JSON viven todos en data/runs
+          # (antes los meta caían en un directorio llamado data/ai_analysis.json).
+          if [ -d data/runs ]; then
+            tar -czf runs.tar.gz data/runs
           fi
 
           # El workflow del tuner descarga runs.tar.gz de db-latest para

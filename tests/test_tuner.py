@@ -904,3 +904,50 @@ class TestCliApply:
         assert "SKIP" in out
         # config.py NO debe haberse modificado
         assert config_py.read_text(encoding="utf-8") == original_config
+
+    def test_apply_gh_pr_create_falla_imprime_stderr(self, tmp_path, monkeypatch, capsys):
+        """Si `gh pr create` falla, el tuner debe volcar el stderr de gh (el
+        motivo real del fallo) y salir con codigo 1 — antes check=True lanzaba
+        CalledProcessError y el mensaje de gh quedaba invisible en CI."""
+        import subprocess as sp_module
+
+        def fake_run(cmd, **kwargs):
+            if cmd[:2] == ["gh", "pr"] and cmd[2] == "list":
+                return sp_module.CompletedProcess(cmd, 0, stdout="[]", stderr="")
+            if cmd[:2] == ["gh", "pr"] and cmd[2] == "create":
+                return sp_module.CompletedProcess(
+                    cmd,
+                    1,
+                    stdout="",
+                    stderr="pull request create failed: GraphQL: was submitted too quickly",
+                )
+            return sp_module.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        monkeypatch.setattr("saas_radar.agents.tuner.subprocess.run", fake_run)
+
+        runs_dir, db, config_py, readme = self._prepare_env(tmp_path, monkeypatch)
+
+        rc = main(
+            [
+                "--runs-dir",
+                str(runs_dir),
+                "--db-path",
+                str(db),
+                "--config-path",
+                str(config_py),
+                "--readme-path",
+                str(readme),
+                "--apply",
+            ]
+        )
+
+        assert rc == 1
+        err = capsys.readouterr().err
+        # El motivo real que devuelve gh llega al log de CI
+        assert "pull request create failed" in err
+        assert "gh pr create fallo" in err
+        # No se marca estado como si el PR existiera
+        state_file = runs_dir.parent / "tuner_state.json"
+        assert not state_file.exists()
+        # El README no registra un tuning que no llego a abrir PR
+        assert "auto-tuning" not in readme.read_text(encoding="utf-8").lower()

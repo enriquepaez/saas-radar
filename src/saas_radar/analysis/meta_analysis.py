@@ -160,8 +160,8 @@ def _derive_meta_path(run_json_path: str) -> Path:
     """Deriva la ruta del meta JSON tocando solo el nombre del archivo.
 
     Un str.replace('.json', '_meta.json') sobre la ruta completa corrompería
-    directorios cuyo nombre contiene '.json' (caso real de producción:
-    data/ai_analysis.json/<ts>_results.json).
+    directorios cuyo nombre contiene '.json' (caso legacy real: el default
+    antiguo data/ai_analysis.json/ generaba <ts>_results.json dentro).
     """
     p = Path(run_json_path)
     name = p.name
