@@ -155,6 +155,9 @@ SUBREDDITS = [
     "legaladvice",
     "marketing",
     "productivity",
+    "businessoperations",
+    "operationsmanagement",
+    "smallbusinessowners",
 ]
 
 PAIN_SEARCH_QUERIES = [
@@ -235,6 +238,8 @@ PAIN_SEARCH_QUERIES = [
     "WIP report Excel",
     # No-code tool frustration (cluster Softr/Notion limits)
     "Notion limitations business",
+    "automating payroll for small businesses",
+    "simplifying inventory management for e-commerce",
 ]
 
 PAIN_SIGNAL_PHRASES = [
